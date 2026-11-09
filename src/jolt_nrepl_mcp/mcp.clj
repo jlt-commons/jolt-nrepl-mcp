@@ -3,7 +3,23 @@
   kimi-nrepl-plugin."
   (:require [clojure.data.json :as json]))
 
-(def server-info {:name "jolt-nrepl" :version "0.2.0"})
+(def server-info {:name "jolt-nrepl" :version "0.2.1"})
+
+(def instructions
+  "What the agent is told about this server in its system prompt, every
+  session. Kept short: it is paid for whether or not the tools are used."
+  (str "Persistent nREPL session for Clojure/Jolt projects. When working on Clojure or Jolt code, "
+       "evaluate and test through these tools instead of running `jolt -e`/`clj` in a shell: "
+       "vars, loaded namespaces and the current ns persist, so each step is one eval.\n"
+       "- Pass the project dir as `cwd` once. If there is no .nrepl-port, call nrepl_start.\n"
+       "- Try code with nrepl_eval before writing it to a file; after editing a file, nrepl_load_file it. "
+       "Run tests in the session: (clojure.test/run-tests 'my.ns-test).\n"
+       "- Debug by capturing values with an inline (def x* x) in a REPL-only redefinition, not println; "
+       "after an error inspect *e and (ex-data *e).\n"
+       "- clj_replace edits a form by structure when Edit fails on whitespace; load=true reloads it. "
+       "clj_check finds and repairs delimiter problems in a file.\n"
+       "- A dropped trailing paren is auto-closed and reported; other syntax errors are refused with line/col.\n"
+       "Load the jolt-nrepl skill for the full workflow."))
 (def ^:private newest-protocol-version "2025-06-18")
 (def ^:private supported-protocol-versions #{"2024-11-05" "2025-03-26" "2025-06-18"})
 
@@ -62,7 +78,8 @@
                                             requested
                                             newest-protocol-version)
                          :capabilities {:tools {:listChanged false}}
-                         :serverInfo server-info}))))
+                         :serverInfo server-info
+                         :instructions instructions}))))
         "ping" (response message {})
         "tools/list" (response message {:tools tool-definitions})
         "tools/call" (let [r (call-requested-tool message tool-definitions call-tool)]

@@ -18,7 +18,9 @@
     (is (= 1 (:id response)))
     (is (= "2025-03-26" (get-in response [:result :protocolVersion])))
     (is (map? (get-in response [:result :capabilities :tools])))
-    (is (= "jolt-nrepl" (get-in response [:result :serverInfo :name]))))
+    (is (= "jolt-nrepl" (get-in response [:result :serverInfo :name])))
+    (testing "instructions tell the agent when to reach for the tools"
+      (is (re-find #"nrepl_eval" (get-in response [:result :instructions])))))
   (is (= "2025-06-18"
          (get-in (handle {:jsonrpc "2.0" :id "a" :method "initialize"
                           :params {:protocolVersion "2099-01-01"}})

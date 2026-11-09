@@ -1,6 +1,6 @@
 {
   "name": "jolt-nrepl",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Persistent nREPL evaluation for Jolt/Clojure projects, with syntax repair, structural edits, and REPL-driven workflow skills",
   "author": { "name": "Dmitri Sotnikov" },
   "license": "EPL-2.0",

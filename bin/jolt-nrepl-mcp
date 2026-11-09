@@ -1,7 +1,22 @@
 #!/bin/sh
-# Run the MCP server from the plugin directory (so jolt finds its deps.edn and
-# not the user's project's), remembering the directory it was launched from.
+# Plugin launcher. Runs an installed release binary when one is on PATH (it
+# starts faster and needs no source tree); otherwise runs this checkout with
+# jolt. JOLT_NREPL_MCP_SOURCE=1 forces the checkout, for working on it.
 JOLT_NREPL_MCP_CWD="${JOLT_NREPL_MCP_CWD:-$PWD}"
 export JOLT_NREPL_MCP_CWD
-cd "$(dirname "$0")/.." || exit 1
+here="$(cd "$(dirname "$0")" && pwd -P)"
+if [ -z "$JOLT_NREPL_MCP_SOURCE" ]; then
+  # every jolt-nrepl-mcp on PATH except this script
+  old_ifs=$IFS; IFS=:
+  for dir in $PATH; do
+    candidate="$dir/jolt-nrepl-mcp"
+    if [ -x "$candidate" ] && [ -f "$candidate" ] &&
+       [ "$(cd "$dir" 2>/dev/null && pwd -P)" != "$here" ]; then
+      IFS=$old_ifs
+      exec "$candidate" "$@"
+    fi
+  done
+  IFS=$old_ifs
+fi
+cd "$here/.." || exit 1
 exec "${JOLT:-jolt}" -m jolt-nrepl-mcp.server

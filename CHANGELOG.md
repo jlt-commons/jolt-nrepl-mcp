@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.1 - 2026-11-09
+
+- The server sends MCP `instructions` on initialize, so a client puts a short
+  "use these tools for Clojure/Jolt work" note in the agent's prompt.
+- The plugin launcher runs an installed `jolt-nrepl-mcp` binary from PATH when
+  there is one, and the checkout otherwise. `JOLT_NREPL_MCP_SOURCE=1` forces the
+  checkout.
+
 ## v0.2.0 - 2026-11-09
 
 First release.

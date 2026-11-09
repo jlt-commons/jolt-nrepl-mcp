@@ -72,9 +72,9 @@ Linux x86_64), which doesn't need a checkout or `jolt` to run (`nrepl_start`
 still runs `jolt nrepl-server`):
 
 ```bash
-tar xzf jolt-nrepl-mcp-v0.2.0-aarch64-macos.tar.gz
-xattr -d com.apple.quarantine jolt-nrepl-mcp-v0.2.0-aarch64-macos/jolt-nrepl-mcp  # macOS only
-claude mcp add --scope user jolt-nrepl -- "$PWD/jolt-nrepl-mcp-v0.2.0-aarch64-macos/jolt-nrepl-mcp"
+tar xzf jolt-nrepl-mcp-v0.2.1-aarch64-macos.tar.gz
+xattr -d com.apple.quarantine jolt-nrepl-mcp-v0.2.1-aarch64-macos/jolt-nrepl-mcp  # macOS only
+claude mcp add --scope user jolt-nrepl -- "$PWD/jolt-nrepl-mcp-v0.2.1-aarch64-macos/jolt-nrepl-mcp"
 ```
 
 `jolt dist` builds the binary at `target/jolt-nrepl-mcp`; `jolt smoke` runs it
@@ -82,8 +82,10 @@ through a real nREPL session.
 
 Kimi Code: `/plugins install /path/to/jolt-nrepl-mcp`.
 
-`bin/jolt-nrepl-mcp` runs the server from this directory and passes the
-caller's directory through `JOLT_NREPL_MCP_CWD`. Set `JOLT` to use a different
+`bin/jolt-nrepl-mcp` (the plugin's launcher) runs an installed release binary
+from PATH when there is one, and otherwise runs this checkout with jolt;
+`JOLT_NREPL_MCP_SOURCE=1` forces the checkout. It passes the caller's directory
+through `JOLT_NREPL_MCP_CWD`. Set `JOLT` to use a different
 launcher (a clone's `bin/jolt`, say).
 
 ## Development
