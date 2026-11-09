@@ -4,5 +4,11 @@
   "description": "Persistent nREPL evaluation for Jolt/Clojure projects, with syntax repair, structural edits, and REPL-driven workflow skills",
   "author": { "name": "Dmitri Sotnikov" },
   "license": "EPL-2.0",
-  "keywords": ["clojure", "jolt", "nrepl", "repl"]
+  "keywords": ["clojure", "jolt", "nrepl", "repl"],
+  "mcpServers": {
+    "jolt-nrepl": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/jolt-nrepl-mcp",
+      "args": []
+    }
+  }
 }
