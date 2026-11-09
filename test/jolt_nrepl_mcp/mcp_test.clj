@@ -20,7 +20,9 @@
     (is (map? (get-in response [:result :capabilities :tools])))
     (is (= "jolt-nrepl" (get-in response [:result :serverInfo :name])))
     (testing "instructions tell the agent when to reach for the tools"
-      (is (re-find #"nrepl_eval" (get-in response [:result :instructions])))))
+      (is (re-find #"nrepl_eval" (get-in response [:result :instructions])))
+      (is (re-find #"(?i)before (you )?edit" (get-in response [:result :instructions]))
+          "the REPL comes first: reproduce and try the fix before editing files")))
   (is (= "2025-06-18"
          (get-in (handle {:jsonrpc "2.0" :id "a" :method "initialize"
                           :params {:protocolVersion "2099-01-01"}})

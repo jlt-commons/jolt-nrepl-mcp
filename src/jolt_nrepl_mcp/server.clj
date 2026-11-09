@@ -20,7 +20,7 @@
 
 (def tool-definitions
   [{:name "nrepl_eval"
-    :description "Evaluate Clojure in the project's persistent nREPL session (connects lazily). Returns stdout, stderr, the last value and the current ns. A dropped trailing paren is repaired and reported; any other syntax problem is refused with line/col before anything runs. The ns from the previous eval carries over."
+    :description "Evaluate Clojure in the project's persistent nREPL session (connects lazily). Use it first: reproduce a bug and try a fix here before editing files. Returns stdout, stderr, the last value and the current ns. A dropped trailing paren is repaired and reported; any other syntax problem is refused with line/col before anything runs. The ns from the previous eval carries over."
     :inputSchema {:type "object"
                   :properties {:code {:type "string" :description "One or more Clojure forms"}
                                :ns {:type "string" :description "Evaluate in this namespace instead of the current one"}

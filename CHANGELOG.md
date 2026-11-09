@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.2 - 2026-11-09
+
+- The server instructions, `nrepl_eval`'s description and the `jolt-nrepl`
+  skill now put the REPL first: reproduce the failing case and try the fix in
+  the session, then edit the file. In testing, an agent fixing a bug edited the
+  file first and only used the REPL to check it.
+
 ## v0.2.1 - 2026-11-09
 
 - The server sends MCP `instructions` on initialize, so a client puts a short

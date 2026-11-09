@@ -1,6 +1,6 @@
 ---
 name: jolt-nrepl
-description: REPL-driven Jolt/Clojure development through the jolt-nrepl MCP tools — evaluate in a persistent nREPL session, reload files, run tests, inspect values instead of adding println, discover APIs, and make structural edits. Use whenever working on Jolt or Clojure code in a project that has (or can start) an nREPL server, and before adding println/log statements to debug.
+description: REPL-driven Jolt/Clojure development through the jolt-nrepl MCP tools — evaluate in a persistent nREPL session, reload files, run tests, inspect values instead of adding println, discover APIs, and make structural edits. Use whenever working on Jolt or Clojure code in a project that has (or can start) an nREPL server: before editing a file to fix a bug or write a function, and before adding println/log statements to debug.
 ---
 
 # Jolt nREPL workflow
@@ -42,16 +42,26 @@ Code is vetted before it is sent:
 `nrepl_load_file` refuses a broken file the same way, with the position. After
 a large edit, `clj_check` the file; `fix: true` applies only the safe repairs.
 
-## Develop in the session
+## Develop in the session: REPL first, then edit
 
-1. Try the expression in `nrepl_eval` first, see the value, then write it into
-   the file.
-2. After editing a file, `nrepl_load_file` it (or `(require 'my.ns :reload)`).
-   `clj_replace` with `load: true` edits and reloads in one call.
-3. Run tests in the session:
+The REPL is where you find the change, not just where you check it. Even when
+the fix looks obvious from reading the code, confirm it in the session before
+touching the file: the cost is one eval, and it catches the wrong hypothesis
+before it is written down.
+
+1. Reproduce first. `nrepl_start` if needed, then in `nrepl_eval` require the
+   namespace and call the failing function or test with its real inputs. Look
+   at the actual value, not the one you expect.
+2. Try the fix in the REPL: redefine the function with `nrepl_eval` (pass `ns`
+   to evaluate in its namespace) and re-run the failing case until it is right.
+3. Only then write it into the file, and `nrepl_load_file` it (or
+   `(require 'my.ns :reload)`). `clj_replace` with `load: true` edits and
+   reloads in one call.
+4. Run tests in the session:
    `(require 'my.ns-test :reload) (clojure.test/run-tests 'my.ns-test)`.
    For a single test: `(clojure.test/test-vars [#'my.ns-test/the-test])`.
-4. A long-running form: pass a larger `timeoutMs`. On timeout the eval is
+   Then the project's test task as the final gate.
+5. A long-running form: pass a larger `timeoutMs`. On timeout the eval is
    interrupted when the server supports it; otherwise the connection is dropped
    and the form may still be running. Timed-out forms are never replayed — do
    not assume their side effects did or did not happen; check.
