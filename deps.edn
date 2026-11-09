@@ -1,0 +1,6 @@
+{:jolt/min-version "0.8.25"
+ :paths ["src"]
+ :deps {}
+ :aliases {:test {:extra-paths ["test"]
+                  :main-opts ["-m" "jolt-nrepl-mcp.test-runner"]}}
+ :tasks {test {:doc "run the tests" :task (jolt "-M:test")}}}

@@ -1,0 +1,7 @@
+#!/bin/sh
+# Run the MCP server from the plugin directory (so jolt finds its deps.edn and
+# not the user's project's), remembering the directory it was launched from.
+JOLT_NREPL_MCP_CWD="${JOLT_NREPL_MCP_CWD:-$PWD}"
+export JOLT_NREPL_MCP_CWD
+cd "$(dirname "$0")/.." || exit 1
+exec "${JOLT:-jolt}" -m jolt-nrepl-mcp.server

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "jolt-nrepl-mcp",
+  "description": "Jolt nREPL MCP plugin",
+  "owner": { "name": "Dmitri Sotnikov" },
+  "plugins": [
+    {
+      "name": "jolt-nrepl",
+      "description": "Persistent nREPL evaluation for Jolt/Clojure with syntax repair and structural edits",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}

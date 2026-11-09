@@ -1,0 +1,22 @@
+{
+  "name": "jolt-nrepl",
+  "version": "0.2.0",
+  "description": "Persistent Jolt nREPL evaluation with syntax repair and structural edits",
+  "skills": "./skills/",
+  "sessionStart": {
+    "skill": "jolt-nrepl"
+  },
+  "interface": {
+    "displayName": "Jolt nREPL",
+    "shortDescription": "Evaluate code in a persistent Jolt nREPL session"
+  },
+  "mcpServers": {
+    "jolt": {
+      "command": "jolt",
+      "args": ["-m", "jolt-nrepl-mcp.server"],
+      "cwd": "./",
+      "startupTimeoutMs": 60000,
+      "toolTimeoutMs": 610000
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "jolt-nrepl": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/jolt-nrepl-mcp",
+      "args": []
+    }
+  }
+}
