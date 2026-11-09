@@ -3,4 +3,8 @@
  :deps {}
  :aliases {:test {:extra-paths ["test"]
                   :main-opts ["-m" "jolt-nrepl-mcp.test-runner"]}}
- :tasks {test {:doc "run the tests" :task (jolt "-M:test")}}}
+ :tasks {test {:doc "run the tests" :task (jolt "-M:test")}
+         dist {:doc "build the standalone binary at target/jolt-nrepl-mcp"
+               :task (shell "jolt" "build" "-m" "jolt-nrepl-mcp.server" "-o" "target/jolt-nrepl-mcp")}
+         smoke {:doc "smoke test the built binary"
+                :task (shell "jolt" "ci/smoke.clj" "target/jolt-nrepl-mcp")}}}

@@ -1,0 +1,59 @@
+name: test
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-linux
+          - os: macos-latest
+            target: aarch64-macos
+    runs-on: ${{ matrix.os }}
+    env:
+      JOLT_GITLIBS_DIR: ${{ github.workspace }}/.ci-deps/gitlibs
+      JOLT_MAVEN_REPOSITORY: ${{ github.workspace }}/.ci-deps/m2
+    steps:
+      - uses: actions/checkout@v7
+
+      # Latest jolt by default; the JOLT_PIN repository variable pins one.
+      - name: Resolve jolt version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOLT_PIN: ${{ vars.JOLT_PIN }}
+        run: |
+          if [ -n "$JOLT_PIN" ]; then
+            ver="$JOLT_PIN"
+          else
+            ver=$(gh api repos/jolt-lang/jolt/releases/latest --jq .tag_name)
+            [ -n "$ver" ] && [ "$ver" != "null" ] || { echo "could not resolve latest jolt"; exit 1; }
+          fi
+          echo "jolt: $ver"
+          echo "JOLT_VERSION=$ver" >> "$GITHUB_ENV"
+
+      - name: Install jolt
+        run: ci/install-jolt.sh "${JOLT_VERSION}" "${{ matrix.target }}"
+
+      # the tests' nREPL server with middleware fetches jolt-lang/nrepl
+      - name: Cache deps
+        uses: actions/cache@v6
+        with:
+          path: .ci-deps
+          key: deps-${{ matrix.target }}-${{ hashFiles('deps.edn', 'test/**/client_test.clj') }}
+          restore-keys: deps-${{ matrix.target }}-
+
+      - name: Test
+        run: jolt -M:test
+
+      # a source run can pass where the closed-world binary fails
+      - name: Build and smoke test the binary
+        run: |
+          jolt build -m jolt-nrepl-mcp.server -o target/jolt-nrepl-mcp
+          cd "$RUNNER_TEMP" && jolt "$GITHUB_WORKSPACE/ci/smoke.clj" "$GITHUB_WORKSPACE/target/jolt-nrepl-mcp"

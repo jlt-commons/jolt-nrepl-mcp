@@ -60,11 +60,25 @@ claude plugin marketplace add /path/to/jolt-nrepl-mcp
 claude plugin install jolt-nrepl@jolt-nrepl-mcp
 ```
 
-Or just the MCP server:
+Or just the MCP server, from a checkout:
 
 ```bash
 claude mcp add --scope user jolt-nrepl -- /path/to/jolt-nrepl-mcp/bin/jolt-nrepl-mcp
 ```
+
+or as a standalone binary from the
+[releases](https://github.com/jlt-commons/jolt-nrepl-mcp/releases) (macOS arm64,
+Linux x86_64), which doesn't need a checkout or `jolt` to run (`nrepl_start`
+still runs `jolt nrepl-server`):
+
+```bash
+tar xzf jolt-nrepl-mcp-v0.2.0-aarch64-macos.tar.gz
+xattr -d com.apple.quarantine jolt-nrepl-mcp-v0.2.0-aarch64-macos/jolt-nrepl-mcp  # macOS only
+claude mcp add --scope user jolt-nrepl -- "$PWD/jolt-nrepl-mcp-v0.2.0-aarch64-macos/jolt-nrepl-mcp"
+```
+
+`jolt dist` builds the binary at `target/jolt-nrepl-mcp`; `jolt smoke` runs it
+through a real nREPL session.
 
 Kimi Code: `/plugins install /path/to/jolt-nrepl-mcp`.
 

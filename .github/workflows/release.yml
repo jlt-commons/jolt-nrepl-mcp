@@ -1,0 +1,122 @@
+name: release
+
+# Build standalone binaries for macOS (arm64) and Linux (x86_64) and attach
+# them to the GitHub release when a v* tag is pushed. workflow_dispatch builds
+# the same archives as workflow artifacts without publishing anything.
+#
+# The jolt version is resolved at build time; set the JOLT_PIN repository
+# variable to a tag to pin one. Tests, build and smoke test all run before
+# the publish step, so a compiler that can't build this tree uploads nothing.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-macos
+          # 22.04's glibc, so the binary runs there and on anything newer
+          - os: ubuntu-22.04
+            target: x86_64-linux
+    runs-on: ${{ matrix.os }}
+    env:
+      JOLT_GITLIBS_DIR: ${{ github.workspace }}/.ci-deps/gitlibs
+      JOLT_MAVEN_REPOSITORY: ${{ github.workspace }}/.ci-deps/m2
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve jolt version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOLT_PIN: ${{ vars.JOLT_PIN }}
+        run: |
+          if [ -n "$JOLT_PIN" ]; then
+            ver="$JOLT_PIN"
+          else
+            ver=$(gh api repos/jolt-lang/jolt/releases/latest --jq .tag_name)
+            [ -n "$ver" ] && [ "$ver" != "null" ] || { echo "could not resolve latest jolt"; exit 1; }
+          fi
+          echo "jolt: $ver"
+          echo "JOLT_VERSION=$ver" >> "$GITHUB_ENV"
+
+      - name: Install jolt
+        run: ci/install-jolt.sh "${JOLT_VERSION}" "${{ matrix.target }}"
+
+      - name: Cache deps
+        uses: actions/cache@v6
+        with:
+          path: .ci-deps
+          key: deps-${{ matrix.target }}-${{ hashFiles('deps.edn', 'test/**/client_test.clj') }}
+          restore-keys: deps-${{ matrix.target }}-
+
+      - name: Test
+        run: jolt -M:test
+
+      - name: Build binary
+        run: jolt build -m jolt-nrepl-mcp.server -o target/jolt-nrepl-mcp
+
+      - name: Package
+        run: |
+          case "${GITHUB_REF}" in
+            refs/tags/*) name="jolt-nrepl-mcp-${GITHUB_REF_NAME}-${{ matrix.target }}" ;;
+            *)           name="jolt-nrepl-mcp-${{ matrix.target }}" ;;
+          esac
+          mkdir -p "$name"
+          cp target/jolt-nrepl-mcp README.md CHANGELOG.md LICENSE "$name/"
+          echo "PKG_DIR=$name" >> "$GITHUB_ENV"
+
+      # Run the packaged binary from outside the checkout, with the build's
+      # dependency checkouts hidden, so it can't lean on files a user's
+      # machine won't have. nrepl_start in it needs `jolt` on PATH.
+      - name: Smoke test
+        run: |
+          hidden=""
+          for d in "$(pwd)/.ci-deps" "$HOME/.jolt/gitlibs" "$HOME/.jolt/mvnlibs" "$HOME/.m2"; do
+            if [ -d "$d" ]; then mv "$d" "$d.hidden"; hidden="$hidden $d"; fi
+          done
+          status=0
+          (cd "$RUNNER_TEMP" && jolt "$GITHUB_WORKSPACE/ci/smoke.clj" "$GITHUB_WORKSPACE/$PKG_DIR/jolt-nrepl-mcp") || status=$?
+          for d in $hidden; do mv "$d.hidden" "$d"; done
+          exit $status
+
+      - name: Archive
+        run: |
+          tar czf "${PKG_DIR}.tar.gz" "$PKG_DIR"
+          shasum -a 256 "${PKG_DIR}.tar.gz" > "${PKG_DIR}.tar.gz.sha256"
+          echo "PKG=${PKG_DIR}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Publish to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "jolt-nrepl-mcp ${GITHUB_REF_NAME}" \
+            --verify-tag \
+            --notes "Standalone binaries of the jolt-nrepl MCP server for macOS (arm64) and Linux (x86_64).
+
+          Unpack the archive and register the binary with your MCP client, for example:
+
+          \`claude mcp add --scope user jolt-nrepl -- /path/to/jolt-nrepl-mcp\`
+
+          The server itself needs nothing else. \`nrepl_start\` runs \`jolt nrepl-server\`, so it needs \`jolt\` on PATH. See CHANGELOG.md for what changed.
+
+          The macOS binary is unsigned. Clear the quarantine flag before the first run: \`xattr -d com.apple.quarantine jolt-nrepl-mcp\`." \
+            || echo "release already exists, uploading asset"
+          gh release upload "${GITHUB_REF_NAME}" "${PKG}" "${PKG}.sha256" --clobber
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jolt-nrepl-mcp-${{ matrix.target }}
+          path: |
+            ${{ env.PKG }}
+            ${{ env.PKG }}.sha256
