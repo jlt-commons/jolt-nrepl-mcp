@@ -12,7 +12,10 @@
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [jolt-nrepl-mcp.bencode :as bencode]
-            [jolt-nrepl-mcp.syntax :as syntax])
+            [jolt-nrepl-mcp.syntax :as syntax]
+            ;; java.net.Socket's provider: loaded on demand in a dev run, but a
+            ;; built binary only has what is required
+            [jolt.socket])
   (:import [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
 (def default-timeout-ms 120000)
@@ -272,16 +275,20 @@
         msg (cond-> msg
               session (assoc :session session)
               (and ns (not (:ns msg)) (= "eval" (:op msg))) (assoc :ns ns))
+        eval? (= "eval" (:op msg))
         {:keys [msgs complete? closed? id queue]}
         (request conn msg timeout-ms #(swap! state assoc :active-id %))
         finish (fn [msgs extra]
                  (forget! conn id)
                  (let [{:keys [values out err status ns ex root-ex]} (combine msgs)
                        error? (boolean (some #{"error" "eval-error" "interrupted"} status))]
-                   (when (and ns (not error?)) (swap! state assoc :ns ns))
+                   ;; a load-file is a load: its ns form does not switch the
+                   ;; session, and a server that got no :ns reports its own
+                   ;; default, which must not become the session's
+                   (when (and ns (not error?) eval?) (swap! state assoc :ns ns))
                    (cond-> (merge {:value (last values)
                                    :out out :err err
-                                   :ns (or ns (:ns @state))
+                                   :ns (if eval? (or ns (:ns @state)) (:ns @state))
                                    :status (vec (sort status))
                                    :error? error?}
                                   extra)

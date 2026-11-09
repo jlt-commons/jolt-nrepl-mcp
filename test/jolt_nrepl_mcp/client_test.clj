@@ -114,6 +114,10 @@
       (spit bad "(ns demo.bad)\n(defn f [x]\n  (let [y 1\n        )]\n    x))\n")
       (is (false? (:error? (c/load-file! st {:cwd cwd :file "src/demo/good.clj"}))))
       (is (= "10" (:value (c/eval! st {:cwd cwd :code "(demo.good/twice 5)"}))))
+      (testing "a load does not move the session's namespace"
+        (c/eval! st {:cwd cwd :code "(ns demo.here)"})
+        (c/load-file! st {:cwd cwd :file "src/demo/good.clj"})
+        (is (= "\"demo.here\"" (:value (c/eval! st {:cwd cwd :code "(str *ns*)"})))))
       (let [d (thrown-data #(c/load-file! st {:cwd cwd :file "src/demo/bad.clj"}))]
         (is (= :syntax (:type d)))
         (is (re-find #"line 4, col 9" (:note d))))
