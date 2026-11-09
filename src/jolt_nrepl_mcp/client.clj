@@ -215,9 +215,9 @@
               same-project? (= root (:root @state))]
           (swap! state merge {:conn conn :root root :host host :port port
                               :session session :ops ops}
-                 ;; jolt's built-in server starts every connection in
-                 ;; clojure.core (its acceptor thread captures *ns* at startup);
-                 ;; an nREPL session is expected to start in user.
+                 ;; jolt 0.8.25's built-in server starts every eval in
+                 ;; clojure.core (jolt-lang/jolt#1564); an nREPL session is
+                 ;; expected to start in user. Harmless on fixed servers.
                  (when-not same-project? {:ns "user"}))
           (status state)))
       (catch Throwable e
