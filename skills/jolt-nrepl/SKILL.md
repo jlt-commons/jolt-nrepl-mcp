@@ -1,6 +1,6 @@
 ---
 name: jolt-nrepl
-description: REPL-driven Jolt/Clojure development through the jolt-nrepl MCP tools — evaluate in a persistent nREPL session, reload files, run tests, inspect values instead of adding println, discover APIs, and make structural edits. Use whenever working on Jolt or Clojure code in a project that has (or can start) an nREPL server: before editing a file to fix a bug or write a function, and before adding println/log statements to debug.
+description: "REPL-driven Jolt/Clojure development through the jolt-nrepl MCP tools — evaluate in a persistent nREPL session, reload files, run tests, inspect values instead of adding println, discover APIs, and make structural edits. Use whenever working on Jolt or Clojure code in a project that has (or can start) an nREPL server: before editing a file to fix a bug or write a function, and before adding println/log statements to debug."
 ---
 
 # Jolt nREPL workflow

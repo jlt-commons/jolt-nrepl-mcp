@@ -1,6 +1,6 @@
 ---
 name: clj-refactor
-description: Use when reviewing Clojure or Jolt files for mechanism/policy separation opportunities
+description: "Use when reviewing Clojure or Jolt files for mechanism/policy separation opportunities"
 ---
 
 <!-- From humorless/clj-native-agent (MIT). -->
