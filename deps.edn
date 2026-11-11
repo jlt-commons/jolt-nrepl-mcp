@@ -7,9 +7,21 @@
         {:git/url "https://github.com/jlt-commons/jolt-lsp"
          :git/tag "v0.1.0"
          :git/sha "41004a1845af676e233ef5f62c443ef8bce2d5ba"}}
- :aliases {:test {:extra-paths ["test"]
-                  :main-opts ["-m" "jolt-nrepl-mcp.test-runner"]}}
+ :aliases {;; jolt test
+           :test {:extra-paths ["test"]
+                  :main-opts ["-m" "jolt-nrepl-mcp.test-runner"]}
+           ;; jolt spec, jolt plan
+           :spec {:extra-paths ["test"]
+                  :extra-deps {io.github.jlt-commons/writ
+                               {:git/url "https://github.com/jlt-commons/writ"
+                                :git/tag "v0.1.14"
+                                :git/sha "11ea31dfd4f261332df3b227c37c962e30eefb4e"}}
+                  :main-opts ["-m" "jolt-nrepl-mcp.spec-runner"]}}
  :tasks {test {:doc "run the tests" :task (jolt "-M:test")}
+         spec {:doc "check the writ specs (pending = no implementation yet)"
+               :task (jolt "-M:spec")}
+         plan {:doc "print the writ state graphs, signatures and laws"
+               :task (jolt "-M:spec" "--plan")}
          dist {:doc "build the standalone binary at target/jolt-nrepl-mcp"
                :task (shell "jolt" "build" "-m" "jolt-nrepl-mcp.server" "-o" "target/jolt-nrepl-mcp")}
          smoke {:doc "smoke test the built binary"

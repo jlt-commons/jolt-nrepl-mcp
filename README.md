@@ -91,9 +91,17 @@ launcher (a clone's `bin/jolt`, say).
 ## Development
 
 ```bash
-jolt -M:test        # or: jolt test
-jolt -M:test jolt-nrepl-mcp.client-test   # one namespace
+jolt test      # Clojure tests (jolt -M:test jolt-nrepl-mcp.client-test for one)
+jolt spec      # writ specs
+jolt plan      # print the writ state graphs, signatures and laws
+jolt dist      # standalone binary at target/jolt-nrepl-mcp
+jolt smoke     # drive the built binary through a real nREPL session
 ```
+
+The writ specs cover the pure core: the bencode wire format
+(`jolt-nrepl-mcp.bencode`) and MCP request routing
+(`jolt-nrepl-mcp.protocol`); `jolt-nrepl-mcp.mcp` does the JSON parsing and
+tool calls around them.
 
 The suite starts real `jolt nrepl-server` processes, one with the default
 middleware (fetched on first run), and drives the stdio server end to end.
