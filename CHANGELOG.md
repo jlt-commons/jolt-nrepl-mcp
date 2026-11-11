@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.1 - 2026-11-11
+
+- The bencode wire format and MCP request routing are pure Clojure, checked
+  by writ specs (`jolt spec`, `jolt plan`); CI runs them. bencode no longer
+  uses host string interop for UTF-8, and decoding is a single pass over the
+  input. Routing moved to `jolt-nrepl-mcp.protocol`. No change in behaviour.
+
 ## v0.3.0 - 2026-11-11
 
 - Syntax diagnosis/repair and the structural replace matcher moved to

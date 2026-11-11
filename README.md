@@ -72,9 +72,9 @@ Linux x86_64), which doesn't need a checkout or `jolt` to run (`nrepl_start`
 still runs `jolt nrepl-server`):
 
 ```bash
-tar xzf jolt-nrepl-mcp-v0.3.0-aarch64-macos.tar.gz
-xattr -d com.apple.quarantine jolt-nrepl-mcp-v0.3.0-aarch64-macos/jolt-nrepl-mcp  # macOS only
-claude mcp add --scope user jolt-nrepl -- "$PWD/jolt-nrepl-mcp-v0.3.0-aarch64-macos/jolt-nrepl-mcp"
+tar xzf jolt-nrepl-mcp-v0.3.1-aarch64-macos.tar.gz
+xattr -d com.apple.quarantine jolt-nrepl-mcp-v0.3.1-aarch64-macos/jolt-nrepl-mcp  # macOS only
+claude mcp add --scope user jolt-nrepl -- "$PWD/jolt-nrepl-mcp-v0.3.1-aarch64-macos/jolt-nrepl-mcp"
 ```
 
 `jolt dist` builds the binary at `target/jolt-nrepl-mcp`; `jolt smoke` runs it

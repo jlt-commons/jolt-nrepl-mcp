@@ -4,7 +4,7 @@
   (:require [clojure.data.json :as json]
             [jolt-nrepl-mcp.protocol :as protocol]))
 
-(def server-info {:name "jolt-nrepl" :version "0.3.0"})
+(def server-info {:name "jolt-nrepl" :version "0.3.1"})
 
 (def instructions
   "What the agent is told about this server in its system prompt, every
