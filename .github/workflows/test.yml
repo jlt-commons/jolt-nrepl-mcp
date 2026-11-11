@@ -52,6 +52,9 @@ jobs:
       - name: Test
         run: jolt -M:test
 
+      - name: Specs
+        run: jolt -M:spec
+
       # a source run can pass where the closed-world binary fails
       - name: Build and smoke test the binary
         run: |
