@@ -1,6 +1,6 @@
 {
   "name": "jolt-nrepl",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Persistent Jolt nREPL evaluation with syntax repair and structural edits",
   "skills": "./skills/",
   "sessionStart": {

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 - 2026-11-11
 
 - Syntax diagnosis/repair and the structural replace matcher moved to
   jolt-lsp v0.1.0 (`jolt-lsp.syntax`, `jolt-lsp.replace`, vendored

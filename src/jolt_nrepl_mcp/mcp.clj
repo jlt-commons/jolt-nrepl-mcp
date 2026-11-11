@@ -3,7 +3,7 @@
   kimi-nrepl-plugin."
   (:require [clojure.data.json :as json]))
 
-(def server-info {:name "jolt-nrepl" :version "0.2.2"})
+(def server-info {:name "jolt-nrepl" :version "0.3.0"})
 
 (def instructions
   "What the agent is told about this server in its system prompt, every
