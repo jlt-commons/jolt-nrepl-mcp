@@ -12,7 +12,7 @@
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [jolt-nrepl-mcp.bencode :as bencode]
-            [jolt-nrepl-mcp.syntax :as syntax]
+            [jolt-lsp.syntax :as syntax]
             ;; java.net.Socket's provider: loaded on demand in a dev run, but a
             ;; built binary only has what is required
             [jolt.socket])
@@ -371,7 +371,7 @@
             text (slurp path)]
         (when-let [d (syntax/diagnose text)]
           (fail :syntax (str "Not loaded — " path ": " (syntax/explain d)
-                             " Run clj_check with fix to repair a trailing truncation.")
+                             " jolt-lsp's jolt_check with fix=true repairs a trailing truncation.")
                 {:note (syntax/explain d) :problem d :file path}))
         (exec! state {:op "load-file" :file text :file-path path
                      :file-name (str (fs/file-name path))}

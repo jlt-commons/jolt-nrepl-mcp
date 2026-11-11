@@ -17,10 +17,10 @@
        "the actual inputs and outputs. Capture values with an inline (def x* x) in a REPL-only "
        "redefinition, not println; after an error inspect *e and (ex-data *e).\n"
        "3. Try the fix by redefining the function in nrepl_eval and re-running the failing case.\n"
-       "4. Only then edit the file, nrepl_load_file it (or clj_replace with load=true), and re-run "
+       "4. Only then edit the file, nrepl_load_file it, and re-run "
        "the tests in the session: (clojure.test/run-tests 'my.ns-test).\n"
-       "clj_replace edits a form by structure when Edit fails on whitespace; clj_check finds and "
-       "repairs delimiter problems. A dropped trailing paren is auto-closed and reported; other "
+       "For structural edits and syntax repair use the jolt-lsp MCP server (jolt_replace_form, "
+       "jolt_check). A dropped trailing paren is auto-closed and reported; other "
        "syntax errors are refused with line/col. Load the jolt-nrepl skill for the full workflow."))
 (def ^:private newest-protocol-version "2025-06-18")
 (def ^:private supported-protocol-versions #{"2024-11-05" "2025-03-26" "2025-06-18"})

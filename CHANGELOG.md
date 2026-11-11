@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Syntax diagnosis/repair and the structural replace matcher moved to
+  jolt-lsp v0.1.0 (`jolt-lsp.syntax`, `jolt-lsp.replace`, vendored
+  parinferish), which is now a dependency.
+- Removed `clj_check` and `clj_replace`: use jolt-lsp's MCP tools
+  `jolt_check` and `jolt_replace_form` (then `nrepl_load_file`). Eval and
+  load-file input is still vetted and repaired as before.
+
 ## v0.2.2 - 2026-11-09
 
 - The server instructions, `nrepl_eval`'s description and the `jolt-nrepl`

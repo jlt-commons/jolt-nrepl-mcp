@@ -1,7 +1,7 @@
 ;; Drive a built jolt-nrepl-mcp binary over stdio from a scratch project
 ;; outside the repo, so a binary that still needs the source tree fails here.
 ;; Exercises the protocol, a real nREPL server (nrepl_start needs `jolt` on
-;; PATH), eval, syntax repair, structural replace with reload, and stop.
+;; PATH), eval, syntax repair, editing and reloading a file, and stop.
 ;; Usage: jolt ci/smoke.clj path/to/jolt-nrepl-mcp
 (require '[babashka.fs :as fs]
          '[babashka.process :as p]
@@ -39,7 +39,7 @@
 (try
   (check "initialize" (= "2025-06-18" (get-in (call 1 "initialize" {:protocolVersion "2025-06-18"})
                                                [:result :protocolVersion])))
-  (check "tools/list" (= 10 (count (get-in (call 2 "tools/list" {}) [:result :tools]))))
+  (check "tools/list" (= 8 (count (get-in (call 2 "tools/list" {}) [:result :tools]))))
   (check "nrepl_start" (not (:isError (tool 3 "nrepl_start" {:cwd proj}))))
   (let [res (tool 4 "nrepl_eval" {:code "(println \"out\") (+ 40 (inc 1"})]
     (check "eval value" (str/includes? (get-in res [:content 0 :text]) "=> 42"))
@@ -47,9 +47,10 @@
   (check "eval refuses mid-text imbalance"
          (:isError (tool 5 "nrepl_eval" {:code "(defn f [] 1)) (g)"})))
   (check "load_file" (not (:isError (tool 6 "nrepl_load_file" {:file "src/smoke/core.clj"}))))
-  (check "clj_replace + load"
-         (not (:isError (tool 7 "clj_replace" {:file "src/smoke/core.clj" :old "(str \"hi \" n)"
-                                               :new "(str \"hello \" n)" :load true}))))
+  (spit (str proj "/src/smoke/core.clj")
+        (str/replace (slurp (str proj "/src/smoke/core.clj")) "\"hi \"" "\"hello \""))
+  (check "edit + load_file"
+         (not (:isError (tool 7 "nrepl_load_file" {:file "src/smoke/core.clj"}))))
   (let [text (get-in (tool 8 "nrepl_eval" {:code "(smoke.core/greet \"ci\")"}) [:content 0 :text])]
     (check "replaced code runs" (str/includes? text "hello ci"))
     (check "loads leave the session in user" (str/includes? text "ns: user")))

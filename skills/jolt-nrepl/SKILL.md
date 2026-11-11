@@ -19,8 +19,6 @@ remembered. The server's `.nrepl-port` is found in `cwd` or any parent.
 |---|---|
 | `nrepl_eval` | Evaluate forms. Returns `out`, `err`, `=> value`, `ns`. Optional `ns`, `timeoutMs`, `maxOutputChars`. |
 | `nrepl_load_file` | Reload a file after editing it on disk. |
-| `clj_replace` | Structural edit: replace the form that *reads* equal to `old`, regardless of whitespace. `load: true` reloads the file afterwards. |
-| `clj_check` | Syntax check without evaluating; `fix: true` writes a safe repair to the file. |
 | `nrepl_start` / `nrepl_stop` | Start (or reuse) `jolt nrepl-server` for the nearest `deps.edn`; stop one it started. |
 | `nrepl_status`, `nrepl_interrupt`, `nrepl_disconnect`, `nrepl_connect` | Housekeeping. |
 
@@ -40,7 +38,8 @@ Code is vetted before it is sent:
   and column and nothing runs. Fix the text; don't resend it unchanged.
 
 `nrepl_load_file` refuses a broken file the same way, with the position. After
-a large edit, `clj_check` the file; `fix: true` applies only the safe repairs.
+a large edit, check the file with jolt-lsp's `jolt_check`; `fix: true` applies
+only the safe repairs.
 
 ## Develop in the session: REPL first, then edit
 
@@ -55,8 +54,8 @@ before it is written down.
 2. Try the fix in the REPL: redefine the function with `nrepl_eval` (pass `ns`
    to evaluate in its namespace) and re-run the failing case until it is right.
 3. Only then write it into the file, and `nrepl_load_file` it (or
-   `(require 'my.ns :reload)`). `clj_replace` with `load: true` edits and
-   reloads in one call.
+   `(require 'my.ns :reload)`). To edit by structure, use jolt-lsp's
+   `jolt_replace_form` with `apply: true`, then `nrepl_load_file`.
 4. Run tests in the session:
    `(require 'my.ns-test :reload) (clojure.test/run-tests 'my.ns-test)`.
    For a single test: `(clojure.test/test-vars [#'my.ns-test/the-test])`.
@@ -66,11 +65,11 @@ before it is written down.
    and the form may still be running. Timed-out forms are never replayed — do
    not assume their side effects did or did not happen; check.
 
-Prefer `clj_replace` over Edit when Edit fails because whitespace or line
-breaks differ, or when a form is easier to name than to copy exactly. Write
-continuation lines of `new` relative to column 1; they are re-indented to the
-match. Multiple matches are listed with line/col — pick one with `occurrence`
-or use `all`.
+Structural edits, syntax checks, navigation and refactors live in the
+jolt-lsp MCP server. Prefer its `jolt_replace_form` over Edit when Edit fails
+because whitespace or line breaks differ, or when a form is easier to name
+than to copy exactly. Multiple matches are listed with line/col — pick one
+with `occurrence` or use `all`.
 
 ## Debug by inspection, not println
 

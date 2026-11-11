@@ -1,14 +1,12 @@
 (ns jolt-nrepl-mcp.test-runner
   (:require [clojure.test :as t]
-            jolt-nrepl-mcp.syntax-test
-            jolt-nrepl-mcp.replace-test
             jolt-nrepl-mcp.bencode-test
             jolt-nrepl-mcp.client-test
             jolt-nrepl-mcp.mcp-test
             jolt-nrepl-mcp.server-test))
 
 (def test-namespaces
-  '[jolt-nrepl-mcp.syntax-test jolt-nrepl-mcp.replace-test jolt-nrepl-mcp.bencode-test jolt-nrepl-mcp.client-test jolt-nrepl-mcp.mcp-test jolt-nrepl-mcp.server-test])
+  '[jolt-nrepl-mcp.bencode-test jolt-nrepl-mcp.client-test jolt-nrepl-mcp.mcp-test jolt-nrepl-mcp.server-test])
 
 (defn -main [& args]
   (let [nss (if (seq args) (map symbol args) test-namespaces)

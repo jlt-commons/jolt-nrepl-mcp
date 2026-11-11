@@ -4,9 +4,7 @@
             [babashka.process :as p]
             [clojure.string :as str]
             [jolt-nrepl-mcp.client :as client]
-            [jolt-nrepl-mcp.mcp :as mcp]
-            [jolt-nrepl-mcp.replace :as replace]
-            [jolt-nrepl-mcp.syntax :as syntax]))
+            [jolt-nrepl-mcp.mcp :as mcp]))
 
 (def ^:private default-max-output 20000)
 
@@ -36,24 +34,6 @@
                                :cwd cwd-prop
                                :timeoutMs timeout-prop}
                   :required ["file"]}}
-   {:name "clj_check"
-    :description "Check Clojure source for delimiter/reader problems without evaluating. Reports line/col, and the repair when one is safe (trailing truncation, trailing over-close, a closer the indentation implies). With fix=true on a file, writes the repaired text."
-    :inputSchema {:type "object"
-                  :properties {:file {:type "string" :description "File to check (absolute, or relative to cwd)"}
-                               :code {:type "string" :description "Source text to check instead of a file"}
-                               :fix {:type "boolean" :description "Write the repaired file (file only)"}
-                               :cwd cwd-prop}}}
-   {:name "clj_replace"
-    :description "Structural find-and-replace in a Clojure file: matches the form that READS equal to `old`, ignoring whitespace, line breaks and indentation, never inside strings or comments. Everything else keeps its formatting. Use when Edit fails on formatting, or to change a form without copying it exactly. Set load=true to reload the file into the REPL afterwards."
-    :inputSchema {:type "object"
-                  :properties {:file {:type "string"}
-                               :old {:type "string" :description "One Clojure form to find"}
-                               :new {:type "string" :description "Replacement text (empty deletes the form). Write continuation lines relative to column 1 or at their final indentation"}
-                               :occurrence {:type "integer" :minimum 1 :description "Pick one of several matches (1-based, file order)"}
-                               :all {:type "boolean" :description "Replace every match"}
-                               :load {:type "boolean" :description "Reload the file into the nREPL session after the edit"}
-                               :cwd cwd-prop}
-                  :required ["file" "old" "new"]}}
    {:name "nrepl_start"
     :description "Start `jolt nrepl-server` for the project (nearest deps.edn at or above cwd) in the background and connect. Reuses a server that is already running."
     :inputSchema {:type "object"
@@ -116,53 +96,6 @@
 
 ;; ---------------------------------------------------------------------------
 ;; tools
-
-(defn- check [state args]
-  (let [file (arg args :file)
-        code (arg args :code)
-        text (cond file (slurp (resolve-file state (arg args :cwd) file))
-                   code code
-                   :else (throw (ex-info "pass file or code" {:type :invalid})))
-        r (syntax/balance text)]
-    (case (:status r)
-      :balanced (mcp/tool-result "ok: reads as Clojure")
-      :repaired (cond
-                  (and file (arg args :fix))
-                  (do (spit (resolve-file state (arg args :cwd) file) (:content r))
-                      (mcp/tool-result (str "wrote repaired file: " (syntax/explain r))))
-                  file
-                  (mcp/tool-result (str "repairable (pass fix=true to write): " (syntax/explain r)))
-                  :else
-                  (mcp/tool-result (str "repaired: " (syntax/explain r) "\n" (:content r))))
-      (mcp/tool-result (str "broken: " (syntax/explain r)) :error? true))))
-
-(defn- replace-tool [state args]
-  (let [cwd (arg args :cwd)
-        path (resolve-file state cwd (arg args :file))
-        _ (when-not (fs/regular-file? path)
-            (throw (ex-info (str "No such file: " path) {:type :missing-file})))
-        r (replace/replace-form (slurp path) (arg args :old) (or (arg args :new) "")
-                                {:occurrence (arg args :occurrence) :all? (arg args :all)})]
-    (if-let [e (:error r)]
-      (mcp/tool-result
-       (str (name e) ": " (:message r)
-            (when-let [d (:diagnosis r)] (str " — " (syntax/explain d)))
-            (when-let [ms (seq (:matches r))]
-              (str "\n" (str/join "\n" (map-indexed (fn [i {:keys [line col text]}]
-                                                      (str (inc i) ". line " line ", col " col ": "
-                                                           (truncate text 200)))
-                                                    ms)))))
-       :error? true)
-      (do
-        (spit path (:content r))
-        (let [ms (:matches r)
-              head (str "replaced " (count ms) (if (= 1 (count ms)) " form" " forms") " at "
-                        (str/join "; " (map #(str "line " (:line %) ", col " (:col %)) ms)))]
-          (if (arg args :load)
-            (let [res (client/load-file! state {:cwd (or cwd (str (fs/parent path))) :file path})]
-              (mcp/tool-result (str head "\nloaded:\n" (eval-text res default-max-output))
-                               :error? (:error? res)))
-            (mcp/tool-result head)))))))
 
 (defn- project-dir [cwd]
   (let [dir (client/canonical-dir cwd)]
@@ -233,8 +166,6 @@
         "nrepl_load_file" (let [r (client/load-file! state {:cwd cwd :file (arg args :file)
                                                             :timeout-ms (arg args :timeoutMs)})]
                             (mcp/tool-result (eval-text r max) :error? (:error? r)))
-        "clj_check" (check state args)
-        "clj_replace" (replace-tool state args)
         "nrepl_start" (start state args)
         "nrepl_stop" (stop state args)
         "nrepl_connect" (let [s (client/connect! state {:cwd cwd :host (arg args :host) :port (arg args :port)})]

@@ -5,8 +5,10 @@ nREPL session: evaluate, reload files, run tests, check and repair syntax, and
 make structural edits to Clojure source. Ships as a Claude Code plugin (and a
 Kimi Code plugin) with a REPL-workflow skill.
 
-It has no dependencies beyond `jolt` itself: JSON, sockets and bencode are
-built in or local, so it starts in about 0.2s and needs no network.
+Its one dependency is jolt-lsp, for syntax repair of eval input; only that
+dependency-free namespace is loaded, so it still starts in about 0.3s.
+JSON, sockets and bencode are built in or local. Run it next to the jolt-lsp
+MCP server for navigation, diagnostics and refactors.
 
 ## Tools
 
@@ -14,8 +16,6 @@ built in or local, so it starts in about 0.2s and needs no network.
 |---|---|
 | `nrepl_eval` | Evaluate code; returns out/err/value/ns. The ns carries over between evals. |
 | `nrepl_load_file` | Load a project file (checked for syntax first). |
-| `clj_check` | Diagnose delimiter/reader problems with line/col; `fix` writes a safe repair. |
-| `clj_replace` | Replace the form that reads equal to `old`, ignoring formatting; `load` reloads after. |
 | `nrepl_start` / `nrepl_stop` | Start `jolt nrepl-server` for the project in the background, or stop it. |
 | `nrepl_connect`, `nrepl_status`, `nrepl_interrupt`, `nrepl_disconnect` | Connection management. |
 
@@ -101,11 +101,12 @@ middleware (fetched on first run), and drives the stdio server end to end.
 ## Credits
 
 - Base protocol and client design from kimi-nrepl-plugin.
-- Delimiter diagnosis and repair ported from samizdat (`samizdat.lisp`), which
-  ports parts of vis's parse-diagnose (Blockether, Apache-2.0).
-- `src/parinferish` is vendored from oakes/parinferish (public domain), with one
-  jolt port change marked inline.
-- `clj_replace` and the debugging/discovery workflow follow
+- Delimiter diagnosis and repair (`jolt-lsp.syntax`) live in
+  [jolt-lsp](https://github.com/jlt-commons/jolt-lsp), which this server
+  depends on; structural edits and syntax checks are jolt-lsp's MCP tools. They were ported from samizdat (`samizdat.lisp`), which ports
+  parts of vis's parse-diagnose (Blockether, Apache-2.0), and use parinferish
+  (oakes/parinferish, public domain) vendored there.
+- The debugging/discovery workflow follows
   humorless/clj-native-agent (MIT); `skills/clj-refactor` is taken from it.
 
 EPL-2.0.

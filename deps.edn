@@ -1,6 +1,12 @@
 {:jolt/min-version "0.8.25"
  :paths ["src"]
- :deps {}
+ ;; Syntax diagnosis/repair of eval input comes from jolt-lsp
+ ;; (jolt-lsp.syntax). Only that dependency-free namespace is loaded, so
+ ;; startup and the built binary stay small.
+ :deps {io.github.jlt-commons/jolt-lsp
+        {:git/url "https://github.com/jlt-commons/jolt-lsp"
+         :git/tag "v0.1.0"
+         :git/sha "41004a1845af676e233ef5f62c443ef8bce2d5ba"}}
  :aliases {:test {:extra-paths ["test"]
                   :main-opts ["-m" "jolt-nrepl-mcp.test-runner"]}}
  :tasks {test {:doc "run the tests" :task (jolt "-M:test")}
