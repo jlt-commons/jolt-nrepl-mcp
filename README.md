@@ -14,14 +14,38 @@ MCP server for navigation, diagnostics and refactors.
 
 | Tool | Purpose |
 |---|---|
-| `nrepl_eval` | Evaluate code; returns out/err/value/ns. The ns carries over between evals. |
+| `nrepl_eval` | Evaluate code; each top-level form is shown with its own out/err/value. The ns carries over between evals. `pprint` pretty-prints maps and nested data. |
 | `nrepl_load_file` | Load a project file (checked for syntax first). |
+| `nrepl_lookup` | A var's arglists, docstring and file:line, resolved in a namespace. |
+| `nrepl_complete` | Completions for a prefix from the running image. |
+| `nrepl_test` | Run clojure.test namespaces or single vars; counts plus each failure with context, expected and actual. |
 | `nrepl_start` / `nrepl_stop` | Start `jolt nrepl-server` for the project in the background, or stop it. |
-| `nrepl_connect`, `nrepl_status`, `nrepl_interrupt`, `nrepl_disconnect` | Connection management. |
+| `nrepl_status` | Connection, ns, print caps and ops; `scan: true` lists the nREPL servers running on the machine. |
+| `nrepl_connect`, `nrepl_interrupt`, `nrepl_disconnect` | Connection management. |
 
 `cwd` is optional on every tool: it defaults to the last project used, then to
 the directory the agent launched the server from. `.nrepl-port` is looked up in
-`cwd` and its parents.
+`cwd` and its parents. When there is none (or it is stale) and the project has
+a `deps.edn`, the tools start a server with `nrepl_start` first and say so;
+`JOLT_NREPL_MCP_AUTOSTART=0` turns that off.
+
+### Evaluation
+
+Code is split into top-level forms and each is sent as its own eval, so every
+form gets its own output and value (jolt's servers only return the last value
+of a multi-form eval). The first error stops the rest and the result says how
+many forms were skipped. Code the client can't read on its own, like
+`::alias/kw`, goes as one eval and the server reads it.
+
+On connect the client gives `*print-length*` and `*print-level*` root values
+(200 and 50) if the server has none, so printing an infinite seq returns
+instead of hanging until the timeout. Set `JOLT_NREPL_MCP_PRINT_LENGTH` /
+`JOLT_NREPL_MCP_PRINT_LEVEL` to change them, or to 0 to leave them unset.
+`nrepl_lookup` and `nrepl_test` print their own results without the caps.
+
+`nrepl_lookup` uses the server's `lookup` op when it has one (jolt-lang/nrepl's
+middleware) and an eval of the var's metadata otherwise. `nrepl_test` rebinds
+`clojure.test/report` to collect results, so it works on any server.
 
 ### Syntax repair
 
@@ -72,9 +96,9 @@ Linux x86_64), which doesn't need a checkout or `jolt` to run (`nrepl_start`
 still runs `jolt nrepl-server`):
 
 ```bash
-tar xzf jolt-nrepl-mcp-v0.3.1-aarch64-macos.tar.gz
-xattr -d com.apple.quarantine jolt-nrepl-mcp-v0.3.1-aarch64-macos/jolt-nrepl-mcp  # macOS only
-claude mcp add --scope user jolt-nrepl -- "$PWD/jolt-nrepl-mcp-v0.3.1-aarch64-macos/jolt-nrepl-mcp"
+tar xzf jolt-nrepl-mcp-v0.4.0-aarch64-macos.tar.gz
+xattr -d com.apple.quarantine jolt-nrepl-mcp-v0.4.0-aarch64-macos/jolt-nrepl-mcp  # macOS only
+claude mcp add --scope user jolt-nrepl -- "$PWD/jolt-nrepl-mcp-v0.4.0-aarch64-macos/jolt-nrepl-mcp"
 ```
 
 `jolt dist` builds the binary at `target/jolt-nrepl-mcp`; `jolt smoke` runs it
@@ -114,6 +138,10 @@ middleware (fetched on first run), and drives the stdio server end to end.
   depends on; structural edits and syntax checks are jolt-lsp's MCP tools. They were ported from samizdat (`samizdat.lisp`), which ports
   parts of vis's parse-diagnose (Blockether, Apache-2.0), and use parinferish
   (oakes/parinferish, public domain) vendored there.
+- Per-form eval output, capped printing, the lookup/test helpers and port
+  discovery (`jolt-nrepl-mcp.discover`) follow
+  [clojure-mcp](https://github.com/bhauman/clojure-mcp) (Bruce Hauman,
+  EPL-2.0); the lsof parsing is ported from its `nrepl_ports` tool.
 - The debugging/discovery workflow follows
   humorless/clj-native-agent (MIT); `skills/clj-refactor` is taken from it.
 

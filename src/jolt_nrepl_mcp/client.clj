@@ -12,6 +12,7 @@
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [jolt-nrepl-mcp.bencode :as bencode]
+            [jolt-nrepl-mcp.forms :as forms]
             [jolt-lsp.syntax :as syntax]
             ;; java.net.Socket's provider: loaded on demand in a dev run, but a
             ;; built binary only has what is required
@@ -22,6 +23,18 @@
 (def max-timeout-ms 600000)
 (def ^:private handshake-timeout-ms 10000)
 (def ^:private interrupt-grace-ms 1500)
+
+;; Root values set for *print-length*/*print-level* on connect, when the
+;; server has none, so printing an infinite seq returns instead of hanging
+;; until the timeout (clojure-mcp caps printing with nREPL's print quota,
+;; which jolt's servers do not implement). Override with
+;; JOLT_NREPL_MCP_PRINT_LENGTH / JOLT_NREPL_MCP_PRINT_LEVEL; 0 leaves it unset.
+(def timeout-hint
+  (str "Usually an infinite loop, a blocking call (deref, a queue, a socket), or an eval "
+       "that needs a larger timeoutMs."))
+
+(def default-print-length 200)
+(def default-print-level 50)
 
 (defn- fail [type message & [data]]
   (throw (ex-info message (merge {:type type} data))))
@@ -133,12 +146,13 @@
 (defn create-state [] (atom {:busy? false}))
 
 (defn status [state]
-  (let [{:keys [conn root host port session ops ns busy?]} @state]
-    {:connected? (boolean (and conn (not @(:closed? conn))))
-     :busy? (boolean busy?)
-     :root root :host host :port port :session session :ns ns
-     :interrupt? (contains? ops "interrupt")
-     :ops (vec (sort ops))}))
+  (let [{:keys [conn root host port session ops ns busy? print]} @state]
+    (cond-> {:connected? (boolean (and conn (not @(:closed? conn))))
+             :busy? (boolean busy?)
+             :root root :host host :port port :session session :ns ns
+             :interrupt? (contains? ops "interrupt")
+             :ops (vec (sort ops))}
+      print (assoc :print print))))
 
 (defn- drop-conn! [state]
   (let [{:keys [conn session]} @state]
@@ -202,6 +216,29 @@
 ;; ---------------------------------------------------------------------------
 ;; connect
 
+(declare exec!)
+
+(defn- env-limit [var default]
+  (let [v (System/getenv var)]
+    (if (str/blank? v) default (let [n (parse-long (str/trim v))] (when (and n (pos? n)) n)))))
+
+(defn- cap-printing!
+  "Give *print-length*/*print-level* root values when the server has none, and
+  record what they are. A server where this fails is left as it is."
+  [state]
+  (let [len (env-limit "JOLT_NREPL_MCP_PRINT_LENGTH" default-print-length)
+        lvl (env-limit "JOLT_NREPL_MCP_PRINT_LEVEL" default-print-level)
+        code (str "(do"
+                  (when len (str " (when (nil? *print-length*) (alter-var-root #'*print-length* (constantly " len ")))"))
+                  (when lvl (str " (when (nil? *print-level*) (alter-var-root #'*print-level* (constantly " lvl ")))"))
+                  " (pr-str {:length *print-length* :level *print-level*}))")]
+    (try
+      (let [{:keys [value error?]} (exec! state {:op "eval" :code code :ns "user"}
+                                          handshake-timeout-ms {:track-ns? false})]
+        (when-not error?
+          (swap! state assoc :print (read-string (read-string value)))))
+      (catch Throwable _ nil))))
+
 (defn- connect-inner! [state {:keys [root host port]}]
   (drop-conn! state)
   (let [conn (open-conn host port)
@@ -222,6 +259,7 @@
                  ;; clojure.core (jolt-lang/jolt#1564); an nREPL session is
                  ;; expected to start in user. Harmless on fixed servers.
                  (when-not same-project? {:ns "user"}))
+          (cap-printing! state)
           (status state)))
       (catch Throwable e
         (close-conn conn)
@@ -234,7 +272,7 @@
   (let [dir (canonical-dir cwd)
         root (if port dir (or (find-root dir)
                               (fail :missing-port
-                                    (str "No .nrepl-port in " dir " or any parent. Start a server with nrepl_start.")
+                                    (str "No .nrepl-port in " dir " or any parent. Start a server with nrepl_start, or list running ones with nrepl_status scan=true.")
                                     {:cwd dir})))
         port (or port (read-port root))]
     (acquire! state)
@@ -246,17 +284,30 @@
   "Reuse the live connection when `cwd` is inside its project; otherwise
   (re)connect to the project that owns `cwd`."
   [state cwd]
-  (let [dir (canonical-dir cwd)
-        {:keys [root]} @state
+  (let [{:keys [root host port]} @state
         live? (:connected? (status state))]
-    (when-not (and live? root (or (= dir root) (str/starts-with? dir (str root "/"))))
-      (let [root' (or (find-root dir)
-                      (when (and root (not live?) (nil? cwd)) root)
-                      (fail :missing-port
-                            (str "No .nrepl-port in " dir " or any parent. Start a server with nrepl_start.")
-                            {:cwd dir}))]
-        (connect-inner! state {:root root' :host (or (:host @state) "127.0.0.1")
-                               :port (read-port root')})))))
+    (if (and (nil? cwd) root)
+      ;; no cwd: the project in use, reconnecting to it if the link dropped
+      (when-not live?
+        (connect-inner! state {:root root :host (or host "127.0.0.1")
+                               :port (if (fs/exists? (str root "/.nrepl-port")) (read-port root) port)}))
+      (let [dir (canonical-dir cwd)]
+        (when-not (and live? root (or (= dir root) (str/starts-with? dir (str root "/"))))
+          (let [root' (or (find-root dir)
+                          (fail :missing-port
+                                (str "No .nrepl-port in " dir " or any parent. Start a server with nrepl_start, or list running ones with nrepl_status scan=true.")
+                                {:cwd dir}))]
+            (connect-inner! state {:root root' :host (or host "127.0.0.1")
+                                   :port (read-port root')})))))))
+
+(defn- with-connection
+  "Run `f` holding the client, connected to the project for `cwd`."
+  [state cwd f]
+  (acquire! state)
+  (try
+    (ensure-connected! state cwd)
+    (f)
+    (finally (release! state))))
 
 ;; ---------------------------------------------------------------------------
 ;; eval
@@ -270,7 +321,9 @@
            (catch Throwable _ false)))))
 
 (defn- exec!
-  [state msg timeout-ms]
+  "Send one op and collect its result. `track-ns?` false keeps the
+  session's namespace where it is (internal evals: lookup, test runs)."
+  [state msg timeout-ms & [{:keys [track-ns?] :or {track-ns? true}}]]
   (let [{:keys [conn session ns]} @state
         msg (cond-> msg
               session (assoc :session session)
@@ -285,7 +338,7 @@
                    ;; a load-file is a load: its ns form does not switch the
                    ;; session, and a server that got no :ns reports its own
                    ;; default, which must not become the session's
-                   (when (and ns (not error?) eval?) (swap! state assoc :ns ns))
+                   (when (and ns (not error?) eval? track-ns?) (swap! state assoc :ns ns))
                    (cond-> (merge {:value (last values)
                                    :out out :err err
                                    :ns (if eval? (or ns (:ns @state)) (:ns @state))
@@ -316,7 +369,8 @@
                            "Interrupt was sent but not confirmed; "
                            "The server has no interrupt op; ")
                          "the connection was dropped so late output cannot leak into the next eval. "
-                         "The form may still be running server-side and was NOT replayed.")
+                         "The form may still be running server-side and was NOT replayed. "
+                         timeout-hint)
                     {:interrupted? interrupted? :certain? false :timeout-ms timeout-ms})))))))
 
 (defn- timeout [t]
@@ -324,6 +378,40 @@
     (when-not (and (integer? t) (<= 1 t max-timeout-ms))
       (fail :invalid-timeout (str "timeoutMs must be an integer in 1.." max-timeout-ms)))
     t))
+
+(defn- readable-elsewhere?
+  "A diagnosis that only means this process's reader can't read it."
+  [problem]
+  (= :does-not-read (:reason problem)))
+
+(defn- eval-forms!
+  "Send each top-level form as its own eval, so each gets its own output and
+  value; the first error stops the rest. Code that can't be split here goes
+  as one eval. The totals (:value, :out, :err, ...) read as one eval's would."
+  [state code ns timeout-ms]
+  (let [fs (forms/split code)]
+    (if (< (count fs) 2)
+      (exec! state (cond-> {:op "eval" :code code} ns (assoc :ns ns)) timeout-ms)
+      (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+        (loop [[f & more] fs, done []]
+          (let [left (max 1 (- deadline (System/currentTimeMillis)))
+                r (try
+                    (exec! state (cond-> {:op "eval" :code f} (and ns (empty? done)) (assoc :ns ns)) left)
+                    (catch clojure.lang.ExceptionInfo e
+                      (if (seq done)
+                        (throw (ex-info (str (ex-message e) " " (count done) " earlier form(s) completed.")
+                                        (assoc (ex-data e) :completed (count done))))
+                        (throw e))))
+                done (conj done (assoc r :code f))]
+            (if (and (seq more) (not (:error? r)))
+              (recur more done)
+              (let [last-r (peek done)]
+                (cond-> (assoc last-r
+                               :forms (mapv #(dissoc % :status) done)
+                               :out (apply str (map :out done))
+                               :err (apply str (map :err done)))
+                  true (dissoc :code)
+                  (seq more) (assoc :skipped (count more)))))))))))
 
 (defn eval!
   "Evaluate `code`. Syntax is vetted first: a trailing truncation is repaired
@@ -333,15 +421,16 @@
   (when-not (and (string? code) (not (str/blank? code)))
     (fail :invalid-code "code must be a nonempty string"))
   (let [timeout-ms (timeout timeout-ms)
-        {vetted :code :keys [problem note]} (syntax/vet code {:whole? true})]
-    (when problem
+        {:keys [problem note] :as v} (syntax/vet code {:whole? true})
+        vetted (if problem code (:code v))]
+    ;; Delimiters balance but it doesn't read HERE: ::alias/kw, a tagged
+    ;; literal or reader feature this process lacks. The server's reader, in
+    ;; the right namespace, is the one that counts.
+    (when (and problem (not (readable-elsewhere? problem)))
       (fail :syntax (str "Not evaluated — " note) {:note note :problem problem}))
-    (acquire! state)
-    (try
-      (ensure-connected! state cwd)
-      (cond-> (exec! state (cond-> {:op "eval" :code vetted} ns (assoc :ns ns)) timeout-ms)
-        note (assoc :repair note))
-      (finally (release! state)))))
+    (with-connection state cwd
+      #(cond-> (eval-forms! state vetted ns timeout-ms)
+         (and note (not problem)) (assoc :repair note)))))
 
 (defn- project-file [root file]
   (when-not (and (string? file) (not (str/blank? file)))
@@ -364,19 +453,164 @@
   broken file is refused with a line and column instead of the reader's guess."
   [state {:keys [cwd file timeout-ms]}]
   (let [timeout-ms (timeout timeout-ms)]
-    (acquire! state)
-    (try
-      (ensure-connected! state cwd)
-      (let [path (project-file (:root @state) file)
-            text (slurp path)]
-        (when-let [d (syntax/diagnose text)]
-          (fail :syntax (str "Not loaded — " path ": " (syntax/explain d)
-                             " jolt-lsp's jolt_check with fix=true repairs a trailing truncation.")
-                {:note (syntax/explain d) :problem d :file path}))
-        (exec! state {:op "load-file" :file text :file-path path
-                     :file-name (str (fs/file-name path))}
-              timeout-ms))
-      (finally (release! state)))))
+    (with-connection state cwd
+      (fn []
+        (let [path (project-file (:root @state) file)
+              text (slurp path)]
+          (when-let [d (let [d (syntax/diagnose text)] (when-not (readable-elsewhere? d) d))]
+            (fail :syntax (str "Not loaded — " path ": " (syntax/explain d)
+                               " jolt-lsp's jolt_check with fix=true repairs a trailing truncation.")
+                  {:note (syntax/explain d) :problem d :file path}))
+          (exec! state {:op "load-file" :file text :file-path path
+                        :file-name (str (fs/file-name path))}
+                 timeout-ms))))))
+
+;; ---------------------------------------------------------------------------
+;; lookup, completion, tests
+;;
+;; Structured answers to what an agent otherwise asks with doc/apropos/run-tests
+;; snippets (clojure-mcp loads a clj-mcp.repl-tools namespace of helpers for
+;; the same purpose). The nREPL ops are used when the server has them; the
+;; fallbacks are internal evals that leave the session's namespace alone.
+
+(defn- op!
+  "Send a non-eval op and return its raw responses."
+  [state msg timeout-ms]
+  (let [{:keys [conn session]} @state
+        {:keys [msgs complete? id]} (request conn (cond-> msg session (assoc :session session)) timeout-ms)]
+    (forget! conn id)
+    (when-not complete?
+      (fail :timeout (str (:op msg) " got no answer within " timeout-ms "ms")))
+    msgs))
+
+(defn- internal-eval
+  "Eval `code`, which returns (pr-str x), and read x back."
+  [state code timeout-ms]
+  (let [{:keys [value error? err ex]} (exec! state {:op "eval" :code code :ns "user"}
+                                             timeout-ms {:track-ns? false})]
+    (if error?
+      {::error (str/trim (str (or (not-empty err) ex "eval failed")))}
+      (read-string (read-string value)))))
+
+(def ^:private unbounded "(binding [*print-length* nil *print-level* nil] (pr-str %s))")
+
+(defn- unbounded-pr [form] (format unbounded form))
+
+(defn lookup!
+  "Metadata for the var `sym` resolves to in `ns` (default: the session's):
+  {:name :ns :doc :arglists :file :line :column}, or nil."
+  [state {:keys [cwd sym ns timeout-ms]}]
+  (when-not (and (string? sym) (not (str/blank? sym)))
+    (fail :invalid-sym "sym must be a nonempty symbol name"))
+  (with-connection state cwd
+    (fn []
+      (let [ns (or ns (:ns @state) "user")
+            t (timeout timeout-ms)]
+        (if (contains? (:ops @state) "lookup")
+          (let [info (some #(get % "info") (op! state {:op "lookup" :sym sym :ns ns} t))]
+            (when (seq info)
+              (cond-> {:name (get info "name") :ns (get info "ns")}
+                (get info "doc") (assoc :doc (get info "doc"))
+                (get info "arglists-str") (assoc :arglists (get info "arglists-str"))
+                (get info "file") (assoc :file (get info "file"))
+                (get info "line") (assoc :line (get info "line"))
+                (get info "column") (assoc :column (get info "column")))))
+          (let [r (internal-eval
+                   state
+                   (str "(let [v (try (ns-resolve (or (find-ns (symbol " (pr-str ns) ")) (find-ns 'user))"
+                        " (symbol " (pr-str sym) ")) (catch Throwable _ nil))"
+                        " m (when (var? v) (meta v))]"
+                        (unbounded-pr
+                         (str "(when m (into {} (remove (comp nil? val)"
+                              " {:name (str (:name m)) :ns (str (:ns m)) :doc (:doc m)"
+                              " :arglists (some-> (:arglists m) pr-str) :file (some-> (:file m) str)"
+                              " :line (:line m) :column (:column m)})))"))
+                        ")")
+                   t)]
+            (when-not (::error r) r)))))))
+
+(defn complete!
+  "Completion candidates for `prefix` in `ns`: [{:candidate :ns :type} ...]."
+  [state {:keys [cwd prefix ns timeout-ms]}]
+  (when-not (and (string? prefix) (not (str/blank? prefix)))
+    (fail :invalid-prefix "prefix must be a nonempty string"))
+  (with-connection state cwd
+    (fn []
+      (let [op (some (:ops @state) ["completions" "complete"])]
+        (when-not op
+          (fail :unsupported "the server has no completions op"))
+        (let [msgs (op! state {:op op :prefix prefix :ns (or ns (:ns @state) "user")}
+                        (timeout timeout-ms))]
+          (->> (mapcat #(get % "completions") msgs)
+               (mapv (fn [c] (into {} (keep (fn [k] (when-let [v (get c (name k))] [k v])))
+                                   [:candidate :ns :type])))))))))
+
+(defn- test-code
+  "Run clojure.test on namespaces or vars with `report` rebound to collect
+  results; returns (pr-str {:counts .. :problems [..]})."
+  [nss vars]
+  (str "(let [counts (atom {:test 0 :pass 0 :fail 0 :error 0}) problems (atom []) cur (atom nil)"
+       " shown (fn [x] (if (instance? Throwable x)"
+       "   (str (clojure.string/replace (str (class x)) #\"^class \" \"\") \": \" (ex-message x)"
+       "        (when-let [d (ex-data x)] (str \" \" (pr-str d))))"
+       "   (pr-str x)))]"
+       " (binding [clojure.test/report"
+       "   (fn [m] (case (:type m)"
+       "     :begin-test-var (do (swap! counts update :test inc)"
+       "                         (reset! cur (let [mm (meta (:var m))] (symbol (str (:ns mm)) (str (:name mm))))))"
+       "     (:pass :fail :error)"
+       "     (do (swap! counts update (:type m) inc)"
+       "         (when-not (= :pass (:type m))"
+       "           (swap! problems conj"
+       "             (into {} (remove (comp nil? val)"
+       "               {:type (:type m) :var @cur :file (:file m) :line (:line m) :message (:message m)"
+       "                :context (first clojure.test/*testing-contexts*)"
+       "                :expected (pr-str (:expected m)) :actual (shown (:actual m))})))))"
+       "     nil))]"
+       (if (seq vars)
+         (str " (let [vs (map (juxt identity resolve) '[" (str/join " " vars) "])]"
+              "   (doseq [[s v] vs :when (nil? v)]"
+              "     (swap! counts update :error inc)"
+              "     (swap! problems conj {:type :error :var s :message \"no such var\"}))"
+              "   (clojure.test/test-vars (keep second vs))))")
+         (str " (clojure.test/run-tests " (str/join " " (map #(str "'" %) nss)) "))"))
+       (unbounded-pr "{:counts @counts :problems @problems}")
+       ")"))
+
+(defn- symbol-name? [s] (and (string? s) (re-matches #"[^\s()\[\]{}\"'`~@^;,\\]+" s)))
+
+(defn test!
+  "Run clojure.test on the namespaces `ns` (reloaded first) or the vars `vars`
+  (fully qualified), with results as data:
+  {:counts {:test :pass :fail :error} :problems [{:type :var :line :message
+  :context :expected :actual}] :out \"..\"} or {:error \"..\"}."
+  [state {:keys [cwd ns vars reload? timeout-ms] :or {reload? true}}]
+  (let [nss (vec ns) vars (vec vars)]
+    (when-not (or (seq nss) (seq vars))
+      (fail :invalid-tests "pass ns (namespaces) or vars (qualified var names)"))
+    (when-not (every? symbol-name? (concat nss vars))
+      (fail :invalid-tests "ns and vars must be symbol names"))
+    (when-not (every? #(str/includes? % "/") vars)
+      (fail :invalid-tests "vars must be fully qualified: my.ns-test/the-test"))
+    (with-connection state cwd
+      (fn []
+        (let [t (timeout timeout-ms)
+              loads (distinct (concat nss (map #(first (str/split % #"/" 2)) vars)))
+              req (exec! state {:op "eval" :ns "user" :code
+                                (str "(require 'clojure.test 'clojure.string "
+                                     (str/join " " (map #(str "'" %) loads))
+                                     (when reload? " :reload") ")")}
+                         t {:track-ns? false})]
+          (if (:error? req)
+            {:error (str/trim (str (not-empty (:err req)) (:ex req)))}
+            (let [{:keys [value error? err ex out]}
+                  (exec! state {:op "eval" :ns "user"
+                                :code (test-code nss vars)}
+                         t {:track-ns? false})]
+              (if error?
+                {:error (str/trim (str (not-empty err) ex)) :out out}
+                (cond-> (read-string (read-string value))
+                  (seq out) (assoc :out out))))))))))
 
 (defn interrupt! [state]
   (cond
@@ -386,3 +620,15 @@
      :reason "server has no interrupt op; add nrepl.middleware/default-middleware or use nrepl_disconnect"}
     (nil? (:active-id @state)) {:interrupted? false :reason "no active eval"}
     :else {:interrupted? (boolean (interrupt-active! state))}))
+
+(defn probe
+  "Whether an nREPL server answers `describe` at host:port; its ops, or nil."
+  [host port]
+  (try
+    (let [conn (open-conn host port)]
+      (try
+        (let [{:keys [msgs complete?]} (request conn {:op "describe"} 1500)]
+          (when complete?
+            {:ops (vec (sort (set (mapcat #(keys (get % "ops")) msgs))))}))
+        (finally (close-conn conn))))
+    (catch Throwable _ nil)))

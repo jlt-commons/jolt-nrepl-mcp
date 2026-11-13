@@ -2,8 +2,11 @@
   "The MCP server: tool definitions, compact text rendering, and stdio loop."
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
+            [clojure.pprint :as pprint]
             [clojure.string :as str]
             [jolt-nrepl-mcp.client :as client]
+            [jolt-nrepl-mcp.discover :as discover]
+            [jolt-nrepl-mcp.forms :as forms]
             [jolt-nrepl-mcp.mcp :as mcp]))
 
 (def ^:private default-max-output 20000)
@@ -18,15 +21,39 @@
 
 (def tool-definitions
   [{:name "nrepl_eval"
-    :description "Evaluate Clojure in the project's persistent nREPL session (connects lazily). Use it first: reproduce a bug and try a fix here before editing files. Returns stdout, stderr, the last value and the current ns. A dropped trailing paren is repaired and reported; any other syntax problem is refused with line/col before anything runs. The ns from the previous eval carries over."
+    :description "Evaluate Clojure in the project's persistent nREPL session (connects lazily, and starts a server for a deps.edn project that has none). Use it first: reproduce a bug and try a fix here before editing files. Each top-level form is evaluated in turn and shown with its own stdout, stderr and value; the first error stops the rest. A dropped trailing paren is repaired and reported; any other syntax problem is refused with line/col before anything runs. The ns carries over between evals. Printing is capped (*print-length*, *print-level*), so an infinite seq returns."
     :inputSchema {:type "object"
                   :properties {:code {:type "string" :description "One or more Clojure forms"}
                                :ns {:type "string" :description "Evaluate in this namespace instead of the current one"}
                                :cwd cwd-prop
                                :timeoutMs timeout-prop
+                               :pprint {:type "boolean" :description "Pretty-print values (large maps and nested data)"}
                                :maxOutputChars {:type "integer" :minimum 200
                                                 :description (str "Per-field output cap, default " default-max-output)}}
                   :required ["code"]}}
+   {:name "nrepl_lookup"
+    :description "A var's arglists, docstring and file:line, resolved in a namespace (aliases work). Use before calling an API you are unsure of, instead of doc/source snippets."
+    :inputSchema {:type "object"
+                  :properties {:sym {:type "string" :description "Symbol, e.g. str/join or my.ns/f"}
+                               :ns {:type "string" :description "Resolve in this namespace (default: the current one)"}
+                               :cwd cwd-prop}
+                  :required ["sym"]}}
+   {:name "nrepl_complete"
+    :description "Vars and namespaces starting with a prefix, from the running image."
+    :inputSchema {:type "object"
+                  :properties {:prefix {:type "string" :description "e.g. clojure.string/jo, str/, redu"}
+                               :ns {:type "string" :description "Complete in this namespace (default: the current one)"}
+                               :cwd cwd-prop}
+                  :required ["prefix"]}}
+   {:name "nrepl_test"
+    :description "Run clojure.test in the session and get counts plus each failure and error (var, testing context, expected, actual, line). Test namespaces are reloaded first. Give ns, or vars for single tests."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "array" :items {:type "string"} :description "Test namespaces, e.g. [\"my.app-test\"]"}
+                               :vars {:type "array" :items {:type "string"} :description "Qualified test vars, e.g. [\"my.app-test/parses\"]"}
+                               :reload {:type "boolean" :description "Reload the namespaces first, default true"}
+                               :cwd cwd-prop
+                               :timeoutMs timeout-prop
+                               :maxOutputChars {:type "integer" :minimum 200}}}}
    {:name "nrepl_load_file"
     :description "Load (reload) a project source file into the session. The file's syntax is checked first and a broken file is refused with line/col."
     :inputSchema {:type "object"
@@ -50,8 +77,8 @@
                                :host {:type "string" :default "127.0.0.1"}
                                :port {:type "integer" :minimum 1 :maximum 65535}}}}
    {:name "nrepl_status"
-    :description "Connection, project root, current ns, busy state and server ops."
-    :inputSchema {:type "object" :properties {}}}
+    :description "Connection, project root, current ns, busy state, print caps and server ops. scan=true also lists the nREPL servers running on this machine (port, pid, directory): use it when .nrepl-port is missing or stale."
+    :inputSchema {:type "object" :properties {:scan {:type "boolean"}}}}
    {:name "nrepl_interrupt"
     :description "Interrupt the running eval (needs the server's interrupt op)."
     :inputSchema {:type "object" :properties {}}}
@@ -70,18 +97,74 @@
             tail (- max head)]
         (str (subs s 0 head) "\n…[" (- n max) " chars elided]…\n" (subs s (- n tail)))))))
 
-(defn- eval-text [{:keys [repair out err value values ns ex root-ex error? interrupted? timed-out?]} max]
-  (str/join "\n"
-            (cond-> []
-              repair (conj (str "repaired: " repair))
-              (seq out) (conj (str "out:\n" (str/trimr (truncate out max))))
-              (seq err) (conj (str "err:\n" (str/trimr (truncate err max))))
-              (and values (> (count values) 1)) (conj (str "values: " (count values)))
-              (some? value) (conj (str "=> " (truncate value max)))
-              ex (conj (str "ex: " ex (when root-ex (str " (root: " root-ex ")"))))
-              timed-out? (conj (str "timed out; interrupted: " (boolean interrupted?)))
-              (and error? (not ex) (not timed-out?)) (conj "error")
-              ns (conj (str "ns: " ns)))))
+(defn pretty
+  "`value` (printed by the server) pretty-printed when it is a map or nested
+  data, or as it is when it doesn't read here (#object, records, ...)."
+  [value]
+  (try
+    (let [v (binding [*read-eval* false
+                      *default-data-reader-fn* (fn [tag _] (throw (ex-info "tagged" {:tag tag})))]
+              (read-string value))]
+      ;; a flat seq of scalars only gets longer, one item per line
+      (if (or (map? v) (and (coll? v) (some coll? v)))
+        (str/trimr (binding [*print-length* nil *print-level* nil] (with-out-str (pprint/pprint v))))
+        value))
+    (catch Throwable _ value)))
+
+(defn- result-lines [{:keys [out err value ex root-ex]} {:keys [max pprint?]}]
+  (cond-> []
+    (seq out) (conj (str "out:\n" (str/trimr (truncate out max))))
+    (seq err) (conj (str "err:\n" (str/trimr (truncate err max))))
+    (some? value) (conj (str "=> " (truncate (if pprint? (pretty value) value) max)))
+    ex (conj (str "ex: " ex (when root-ex (str " (root: " root-ex ")"))))))
+
+(defn- eval-text
+  ([r max] (eval-text r max {}))
+  ([{:keys [repair forms values ns ex error? interrupted? timed-out? skipped] :as r} max opts]
+   (let [opts (assoc opts :max max)]
+     (str/join "\n"
+               (cond-> []
+                 repair (conj (str "repaired: " repair))
+                 forms (into (mapcat (fn [f] (into [(str "-- " (forms/label (:code f)))] (result-lines f opts))) forms))
+                 (not forms) (into (result-lines r opts))
+                 (and (not forms) values (> (count values) 1)) (conj (str "values: " (count values)))
+                 skipped (conj (str "skipped: " skipped " form(s) after the error"))
+                 timed-out? (conj (str "timed out; interrupted: " (boolean interrupted?) ". " client/timeout-hint))
+                 (and error? (not ex) (not timed-out?)) (conj "error")
+                 ns (conj (str "ns: " ns)))))))
+
+(defn- lookup-text [{:keys [ns name arglists doc file line]}]
+  (str/join "\n" (cond-> [(str ns "/" name)]
+                   arglists (conj arglists)
+                   doc (conj doc)
+                   file (conj (str file (when line (str ":" line)))))))
+
+(defn- test-text [{:keys [counts problems out error]} max]
+  (if error
+    (str "error: " (truncate error max))
+    (let [{:keys [test pass fail error]} counts]
+      (str/join "\n"
+                (concat
+                 [(str test " tests, " pass " passed, " fail " failed, " error " errors")]
+                 (for [{:keys [type var context message expected actual line]} problems]
+                   (str/join "\n"
+                             (cond-> [(str (if (= :fail type) "FAIL " "ERROR ") var (when line (str " (line " line ")")))]
+                               context (conj (str "  in: " context))
+                               message (conj (str "  " message))
+                               (and expected (not= "nil" expected)) (conj (str "  expected: " (truncate expected max)))
+                               actual (conj (str "  actual: " (truncate actual max))))))
+                 (when (seq out) [(str "out:\n" (str/trimr (truncate out max)))]))))))
+
+(defn- scan-text [servers root]
+  (if (map? servers)
+    (:error servers)
+    (str "servers:"
+         (if (empty? servers)
+           " none found"
+           (apply str (for [{:keys [port pid command dir ops]} servers]
+                        (str "\n  port " port " pid " pid " " command " " dir
+                             (when (= dir root) " (this project)")
+                             (when (some #{"interrupt"} ops) " [interrupt]"))))))))
 
 (defn- arg [args k]
   (let [v (get args (name k) (get args k))]
@@ -155,23 +238,76 @@
     (mcp/tool-result (str (when type (str (name type) ": ")) (ex-message e))
                      :error? true)))
 
+(defn- autostart? []
+  (not= "0" (System/getenv "JOLT_NREPL_MCP_AUTOSTART")))
+
+(defn- with-server
+  "Run `f`; when it fails because the project has no running server (no
+  .nrepl-port, or a stale one) and the project has a deps.edn, start one and
+  run `f` again. Returns [started-message-or-nil result]."
+  [state cwd f]
+  (try
+    [nil (f)]
+    (catch clojure.lang.ExceptionInfo e
+      (let [{:keys [type]} (ex-data e)
+            root (when (and (#{:missing-port :connection-refused} type) (autostart?))
+                   (try (project-dir cwd) (catch Throwable _ nil)))]
+        (if (and root (fs/exists? (fs/path root "deps.edn")))
+          (let [r (start state {"cwd" root})]
+            (if (:isError r)
+              (throw e)
+              [(:text (first (:content r))) (f)]))
+          (throw e))))))
+
+(defn- with-started [started {:keys [content] :as result}]
+  (if started
+    (assoc-in result [:content 0 :text] (str started "\n" (:text (first content))))
+    result))
+
+(defn- strings [v] (cond (nil? v) nil (string? v) [v] :else (vec v)))
+
 (defn call-tool [state tool args]
   (try
     (let [cwd (arg args :cwd)
-          max (or (arg args :maxOutputChars) default-max-output)]
+          max (or (arg args :maxOutputChars) default-max-output)
+          run (fn [f render error?]
+                (let [[started r] (with-server state cwd f)]
+                  (with-started started (mcp/tool-result (render r) :error? (error? r)))))]
       (case tool
-        "nrepl_eval" (let [r (client/eval! state {:cwd cwd :code (arg args :code) :ns (arg args :ns)
-                                                  :timeout-ms (arg args :timeoutMs)})]
-                       (mcp/tool-result (eval-text r max) :error? (:error? r)))
-        "nrepl_load_file" (let [r (client/load-file! state {:cwd cwd :file (arg args :file)
-                                                            :timeout-ms (arg args :timeoutMs)})]
-                            (mcp/tool-result (eval-text r max) :error? (:error? r)))
+        "nrepl_eval" (run #(client/eval! state {:cwd cwd :code (arg args :code) :ns (arg args :ns)
+                                                :timeout-ms (arg args :timeoutMs)})
+                          #(eval-text % max {:pprint? (true? (arg args :pprint))})
+                          :error?)
+        "nrepl_load_file" (run #(client/load-file! state {:cwd cwd :file (arg args :file)
+                                                          :timeout-ms (arg args :timeoutMs)})
+                               #(eval-text % max) :error?)
+        "nrepl_lookup" (let [sym (arg args :sym)]
+                         (run #(client/lookup! state {:cwd cwd :sym sym :ns (arg args :ns)})
+                              #(if % (lookup-text %) (str sym " not found (no var by that name in "
+                                                          (or (arg args :ns) "the current ns") ")"))
+                              nil?))
+        "nrepl_complete" (run #(client/complete! state {:cwd cwd :prefix (arg args :prefix) :ns (arg args :ns)})
+                              #(if (seq %)
+                                 (str/join "\n" (map (fn [{:keys [candidate type]}]
+                                                       (str candidate (when type (str " (" type ")"))))
+                                                     (take 100 %)))
+                                 "no completions")
+                              (constantly false))
+        "nrepl_test" (run #(client/test! state {:cwd cwd :ns (strings (arg args :ns)) :vars (strings (arg args :vars))
+                                                :reload? (not (false? (arg args :reload)))
+                                                :timeout-ms (arg args :timeoutMs)})
+                          #(test-text % max)
+                          #(boolean (or (:error %) (pos? (get-in % [:counts :fail] 0))
+                                        (pos? (get-in % [:counts :error] 0)))))
         "nrepl_start" (start state args)
         "nrepl_stop" (stop state args)
         "nrepl_connect" (let [s (client/connect! state {:cwd cwd :host (arg args :host) :port (arg args :port)})]
                           (mcp/tool-result (str "connected to " (:host s) ":" (:port s) " for " (:root s)
                                                 "; interrupt: " (:interrupt? s))))
-        "nrepl_status" (mcp/tool-result (pr-str (client/status state)))
+        "nrepl_status" (let [st (client/status state)]
+                         (mcp/tool-result (str (pr-str st)
+                                               (when (true? (arg args :scan))
+                                                 (str "\n" (scan-text (discover/scan) (:root st)))))))
         "nrepl_interrupt" (let [r (client/interrupt! state)]
                             (mcp/tool-result (if (:interrupted? r) "interrupt sent" (str "not interrupted: " (:reason r)))
                                              :error? (not (:interrupted? r))))
