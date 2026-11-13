@@ -17,13 +17,23 @@ remembered. The server's `.nrepl-port` is found in `cwd` or any parent.
 
 | Tool | Use |
 |---|---|
-| `nrepl_eval` | Evaluate forms. Returns `out`, `err`, `=> value`, `ns`. Optional `ns`, `timeoutMs`, `maxOutputChars`. |
+| `nrepl_eval` | Evaluate forms. Each top-level form is shown as `-- form`, then its `out`, `err`, `=> value`; the first error stops the rest (`skipped: N`). Optional `ns`, `pprint`, `timeoutMs`, `maxOutputChars`. |
 | `nrepl_load_file` | Reload a file after editing it on disk. |
+| `nrepl_lookup` | Arglists, docstring and file:line of a var (`sym`, optional `ns`; aliases work). |
+| `nrepl_complete` | Vars/namespaces starting with a `prefix`. |
+| `nrepl_test` | Run clojure.test: `ns` (reloaded first) or `vars`. Counts, then each FAIL/ERROR with var, line, testing context, expected, actual. |
 | `nrepl_start` / `nrepl_stop` | Start (or reuse) `jolt nrepl-server` for the nearest `deps.edn`; stop one it started. |
-| `nrepl_status`, `nrepl_interrupt`, `nrepl_disconnect`, `nrepl_connect` | Housekeeping. |
+| `nrepl_status` | Connection, ns, print caps, ops. `scan: true` lists every nREPL server running on the machine with its directory. |
+| `nrepl_interrupt`, `nrepl_disconnect`, `nrepl_connect` | Housekeeping. |
 
-If `nrepl_eval` says there is no `.nrepl-port`, call `nrepl_start` with the
-project dir. If the port is stale (connection refused), `nrepl_start` replaces it.
+A project with a `deps.edn` and no server (or a stale `.nrepl-port`) gets one
+started on the first call; the result says `started nREPL …`. Without a
+`deps.edn`, run `nrepl_start` yourself, or find a running server with
+`nrepl_status` `scan: true` and `nrepl_connect` to its port.
+
+Printing is capped (`*print-length*` 200, `*print-level*` 50), so `(range)`
+returns `(0 1 … ...)` instead of hanging. A trailing `...` means more items
+exist: count them or take a slice rather than trusting what is shown.
 
 ## Syntax repair
 
@@ -56,9 +66,9 @@ before it is written down.
 3. Only then write it into the file, and `nrepl_load_file` it (or
    `(require 'my.ns :reload)`). To edit by structure, use jolt-lsp's
    `jolt_replace_form` with `apply: true`, then `nrepl_load_file`.
-4. Run tests in the session:
-   `(require 'my.ns-test :reload) (clojure.test/run-tests 'my.ns-test)`.
-   For a single test: `(clojure.test/test-vars [#'my.ns-test/the-test])`.
+4. Run tests in the session with `nrepl_test` (`ns: ["my.ns-test"]`, or
+   `vars: ["my.ns-test/the-test"]` for one). It reloads the test namespace and
+   returns each failure's expected/actual, so there is no output to parse.
    Then the project's test task as the final gate.
 5. A long-running form: pass a larger `timeoutMs`. On timeout the eval is
    interrupted when the server supports it; otherwise the connection is dropped
@@ -69,7 +79,8 @@ Structural edits, syntax checks, navigation and refactors live in the
 jolt-lsp MCP server. Prefer its `jolt_replace_form` over Edit when Edit fails
 because whitespace or line breaks differ, or when a form is easier to name
 than to copy exactly. Multiple matches are listed with line/col — pick one
-with `occurrence` or use `all`.
+with `occurrence` or use `all`. Edits there preview a diff by default;
+`apply: true` writes. Load the `jolt-lsp` skill for that toolset.
 
 ## Debug by inspection, not println
 
@@ -103,7 +114,10 @@ More inspection moves:
 
 ## Discover before writing
 
-Before using an API you are not sure of, ask the running image:
+Before using an API you are not sure of, ask the running image.
+`nrepl_lookup` gives arglists, docstring and file:line in one call
+(`sym: "str/split"`, with `ns` for aliases); `nrepl_complete` lists what
+starts with a prefix. For anything else, eval:
 
 ```clojure
 (require '[clojure.repl :as r])
@@ -116,8 +130,8 @@ Before using an API you are not sure of, ask the running image:
 (some? (resolve 'some.ns/f))          ; does it exist here?
 ```
 
-Jolt has no `clojure.repl/source`; use the var's `:file`/`:line` metadata and
-read the file (jolt's own namespaces live under `jolt-core/` and `stdlib/` in
+Jolt has no `clojure.repl/source`; `nrepl_lookup` gives the var's file and
+line, then read the file (jolt's own namespaces live under `jolt-core/` and `stdlib/` in
 the jolt repo).
 
 ## Jolt is not the JVM

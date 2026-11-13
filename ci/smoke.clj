@@ -39,7 +39,7 @@
 (try
   (check "initialize" (= "2025-06-18" (get-in (call 1 "initialize" {:protocolVersion "2025-06-18"})
                                                [:result :protocolVersion])))
-  (check "tools/list" (= 8 (count (get-in (call 2 "tools/list" {}) [:result :tools]))))
+  (check "tools/list" (= 11 (count (get-in (call 2 "tools/list" {}) [:result :tools]))))
   (check "nrepl_start" (not (:isError (tool 3 "nrepl_start" {:cwd proj}))))
   (let [res (tool 4 "nrepl_eval" {:code "(println \"out\") (+ 40 (inc 1"})]
     (check "eval value" (str/includes? (get-in res [:content 0 :text]) "=> 42"))
@@ -54,6 +54,19 @@
   (let [text (get-in (tool 8 "nrepl_eval" {:code "(smoke.core/greet \"ci\")"}) [:content 0 :text])]
     (check "replaced code runs" (str/includes? text "hello ci"))
     (check "loads leave the session in user" (str/includes? text "ns: user")))
+  (let [text (get-in (tool 10 "nrepl_eval" {:code "1 (range)" :pprint true}) [:content 0 :text])]
+    (check "per-form values" (str/includes? text "-- 1\n=> 1"))
+    (check "printing is capped" (str/includes? text "...)")))
+  (check "nrepl_lookup"
+         (str/includes? (get-in (tool 11 "nrepl_lookup" {:sym "smoke.core/greet"}) [:content 0 :text]) "([n])"))
+  (check "nrepl_complete"
+         (str/includes? (get-in (tool 12 "nrepl_complete" {:prefix "smoke.core/gr"}) [:content 0 :text]) "smoke.core/greet"))
+  (spit (str proj "/src/smoke/core_test.clj")
+        "(ns smoke.core-test (:require [clojure.test :refer [deftest is]] [smoke.core :as c]))\n(deftest greets (is (= \"hello x\" (c/greet \"x\"))))\n")
+  (check "nrepl_test"
+         (str/includes? (get-in (tool 13 "nrepl_test" {:ns ["smoke.core-test"]}) [:content 0 :text]) "1 tests, 1 passed"))
+  (check "nrepl_status scan"
+         (str/includes? (get-in (tool 14 "nrepl_status" {:scan true}) [:content 0 :text]) "(this project)"))
   (check "nrepl_stop" (not (:isError (tool 9 "nrepl_stop" {:cwd proj}))))
   (.close w)
   (check "clean exit" (= 0 (:exit (deref proc 10000 {:exit :timeout}))))

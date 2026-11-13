@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.4.0 - 2026-11-12
+
+- `nrepl_eval` sends each top-level form as its own eval and shows each with
+  its own output and value; the first error stops the rest. Before, only the
+  last value of a multi-form eval came back.
+- `*print-length*`/`*print-level*` get root values on connect (200/50, set
+  with `JOLT_NREPL_MCP_PRINT_LENGTH`/`_LEVEL`), so `(range)` returns instead
+  of hanging until the timeout. `pprint: true` pretty-prints maps and nested
+  data.
+- New tools: `nrepl_lookup` (arglists, doc, file:line), `nrepl_complete`, and
+  `nrepl_test` (clojure.test with each failure's var, context, expected and
+  actual). `nrepl_status` takes `scan: true` to list running nREPL servers.
+- Tools start a server when a `deps.edn` project has none or its
+  `.nrepl-port` is stale (`JOLT_NREPL_MCP_AUTOSTART=0` turns it off).
+- Fixed: a call without `cwd` reconnected to the MCP process's directory
+  instead of the project in use.
+- Fixed: valid code with an alias-qualified keyword (`::s/x`) was refused as
+  a syntax error by `nrepl_eval` and `nrepl_load_file`.
+- Timeout errors say what usually causes them.
+- Ideas and some code from clojure-mcp (EPL-2.0).
+
 ## v0.3.1 - 2026-11-11
 
 - The bencode wire format and MCP request routing are pure Clojure, checked

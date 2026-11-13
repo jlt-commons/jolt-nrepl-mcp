@@ -33,7 +33,12 @@
 
 (defn stop-server! [{:keys [root proc]}]
   (p/destroy-tree proc)
-  (fs/delete-tree root {:force true}))
+  ;; wait for it to exit: a server removes its .nrepl-port on the way out,
+  ;; which races delete-tree's walk
+  (deref proc 10000 nil)
+  (try (fs/delete-tree root {:force true})
+       (catch java.nio.file.NoSuchFileException _
+         (fs/delete-tree root {:force true}))))
 
 (def ^:dynamic *base* nil)
 (def ^:dynamic *rich* nil)
@@ -169,3 +174,128 @@
     (try
       (is (= :missing-port (:type (thrown-data #(c/eval! st {:cwd dir :code "1"})))))
       (finally (fs/delete-tree dir {:force true})))))
+
+;; --- per-form eval, print caps, lookup, completion, tests -------------------
+
+(deftest each-form-gets-its-own-output-and-value
+  (let [st (c/create-state) cwd (:root *base*)]
+    (try
+      (let [r (c/eval! st {:cwd cwd :code "(println \"a\") 1 (println \"b\") (+ 1 1)"})]
+        (is (= ["nil" "1" "nil" "2"] (mapv :value (:forms r))))
+        (is (= ["a\n" "" "b\n" ""] (mapv :out (:forms r))))
+        (is (= ["(println \"a\")" "1" "(println \"b\")" "(+ 1 1)"] (mapv :code (:forms r))))
+        (testing "the totals stay as they were"
+          (is (= "2" (:value r)))
+          (is (= "a\nb\n" (:out r)))))
+      (testing "a namespace switch carries into the next form"
+        (let [r (c/eval! st {:cwd cwd :code "(ns demo.per-form) (str *ns*)"})]
+          (is (= "\"demo.per-form\"" (:value r)))
+          (is (= "demo.per-form" (:ns r))))
+        (c/eval! st {:cwd cwd :code "(ns user)"}))
+      (testing "the first error stops the rest"
+        (c/eval! st {:cwd cwd :code "(def z 1)"})
+        (let [r (c/eval! st {:cwd cwd :code "(def z 2) (/ 1 0) (def z 3)"})]
+          (is (true? (:error? r)))
+          (is (= 1 (:skipped r)))
+          (is (= 2 (count (:forms r))))
+          (is (= "2" (:value (c/eval! st {:cwd cwd :code "z"}))))))
+      (testing "code that can't be split here is sent whole"
+        (let [r (c/eval! st {:cwd cwd :code "(require '[clojure.string :as s]) ::s/x"})]
+          (is (nil? (:forms r)))
+          (is (= ":clojure.string/x" (:value r)))))
+      (finally (c/disconnect! st)))))
+
+(deftest omitted-cwd-means-the-connected-project
+  (let [st (c/create-state) cwd (:root *base*)]
+    (try
+      (c/eval! st {:cwd cwd :code "(def here 1)"})
+      (is (= "1" (:value (c/eval! st {:code "here"}))))
+      (is (= (str (fs/real-path cwd)) (:root (c/status st))))
+      (testing "and after a dropped connection, the last project"
+        (c/disconnect! st)
+        (c/connect! st {:cwd cwd})
+        (#'c/drop-conn! st)
+        (is (= "1" (:value (c/eval! st {:code "here"})))))
+      (finally (c/disconnect! st)))))
+
+(deftest printing-is-capped-so-infinite-seqs-return
+  (let [st (c/create-state) cwd (:root *base*)]
+    (try
+      (let [r (c/eval! st {:cwd cwd :timeout-ms 10000 :code "(range)"})]
+        (is (false? (:error? r)))
+        (is (str/ends-with? (:value r) "...)")))
+      (is (= {:length c/default-print-length :level c/default-print-level} (:print (c/status st))))
+      (finally (c/disconnect! st)))))
+
+(deftest timeouts-say-what-probably-happened
+  (let [st (c/create-state) cwd (:root *base*)]
+    (try
+      (is (re-find #"infinite loop" (ex-message (try (c/eval! st {:cwd cwd :timeout-ms 100 :code "(Thread/sleep 400)"})
+                                                     (catch clojure.lang.ExceptionInfo e e)))))
+      (finally (c/disconnect! st)))))
+
+(deftest looks-up-vars-with-or-without-the-middleware
+  (doseq [srv [*base* *rich*]]
+    (let [st (c/create-state) cwd (:root srv)]
+      (try
+        (let [i (c/lookup! st {:cwd cwd :sym "clojure.string/join"})]
+          (is (= "clojure.string" (:ns i)))
+          (is (= "join" (:name i)))
+          (is (= "([coll] [separator coll])" (:arglists i)))
+          (is (re-find #"separated by" (:doc i)))
+          (is (integer? (:line i))))
+        (testing "aliases resolve in the given ns"
+          (c/eval! st {:cwd cwd :code "(ns demo.lk (:require [clojure.string :as s]))"})
+          (is (= "join" (:name (c/lookup! st {:cwd cwd :sym "s/join" :ns "demo.lk"})))))
+        (is (nil? (c/lookup! st {:cwd cwd :sym "no.such/thing"})))
+        (testing "a lookup does not move the session's namespace"
+          (is (= "demo.lk" (:ns (c/status st)))))
+        (finally (c/disconnect! st))))))
+
+(deftest completes-prefixes
+  (let [st (c/create-state) cwd (:root *base*)]
+    (try
+      (is (some #{{:candidate "clojure.string/join" :ns "clojure.string"}}
+                (c/complete! st {:cwd cwd :prefix "clojure.string/jo"})))
+      (is (some #(= "reduce" (:candidate %)) (c/complete! st {:cwd cwd :prefix "redu"})))
+      (finally (c/disconnect! st)))))
+
+(deftest runs-tests-and-returns-structured-results
+  (let [st (c/create-state) cwd (:root *base*)]
+    (spit (str cwd "/src/demo/t_test.clj")
+          (str "(ns demo.t-test (:require [clojure.test :refer [deftest is testing]]))\n"
+               "(deftest ok (is (= 1 1)))\n"
+               "(deftest bad (testing \"ctx\" (is (= 1 2) \"msg\")))\n"
+               "(deftest boom (throw (ex-info \"kaboom\" {:k 1})))\n"))
+    (try
+      (let [{:keys [counts problems]} (c/test! st {:cwd cwd :ns ["demo.t-test"]})]
+        (is (= {:test 3 :pass 1 :fail 1 :error 1} counts))
+        (let [fail (first (filter #(= :fail (:type %)) problems))]
+          (is (= 'demo.t-test/bad (:var fail)))
+          (is (= "ctx" (:context fail)))
+          (is (= "msg" (:message fail)))
+          (is (= "(= 1 2)" (:expected fail)))
+          (is (= 3 (:line fail))))
+        (let [err (first (filter #(= :error (:type %)) problems))]
+          (is (= 'demo.t-test/boom (:var err)))
+          (is (re-find #"kaboom" (:actual err)))
+          (is (re-find #"\{:k 1\}" (:actual err)))))
+      (testing "selected vars only"
+        (is (= {:test 1 :pass 1 :fail 0 :error 0}
+               (:counts (c/test! st {:cwd cwd :vars ["demo.t-test/ok"]})))))
+      (testing "a namespace that does not load is an error result"
+        (is (re-find #"not.there" (str (:error (c/test! st {:cwd cwd :ns ["not.there"]}))))))
+      (finally (c/disconnect! st)))))
+
+(deftest alias-keywords-are-not-refused-as-syntax-errors
+  ;; they read only in the namespace that has the alias, which this process
+  ;; is not: the server decides
+  (let [st (c/create-state) cwd (:root *base*)
+        f (str cwd "/src/demo/kw.clj")]
+    (try
+      (spit f "(ns demo.kw (:require [clojure.string :as s]))\n(def k ::s/x)\n")
+      (is (false? (:error? (c/load-file! st {:cwd cwd :file "src/demo/kw.clj"}))))
+      (is (= ":clojure.string/x" (:value (c/eval! st {:cwd cwd :ns "demo.kw" :code "::s/x"}))))
+      (testing "the server still reports real reader errors"
+        (is (true? (:error? (c/eval! st {:cwd cwd :ns "demo.kw" :code "::nope/x"})))))
+      (finally (c/disconnect! st)))))
