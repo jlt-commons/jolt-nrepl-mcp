@@ -79,7 +79,8 @@ Structural edits, syntax checks, navigation and refactors live in the
 jolt-lsp MCP server. Prefer its `jolt_replace_form` over Edit when Edit fails
 because whitespace or line breaks differ, or when a form is easier to name
 than to copy exactly. Multiple matches are listed with line/col — pick one
-with `occurrence` or use `all`.
+with `occurrence` or use `all`. Edits there preview a diff by default;
+`apply: true` writes. Load the `jolt-lsp` skill for that toolset.
 
 ## Debug by inspection, not println
 
