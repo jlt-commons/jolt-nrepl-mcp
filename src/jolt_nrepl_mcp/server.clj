@@ -170,13 +170,6 @@
   (let [v (get args (name k) (get args k))]
     (if (and (string? v) (str/blank? v) (not= k :new)) nil v)))
 
-(defn- resolve-file [state cwd file]
-  (cond
-    (fs/absolute? file) file
-    cwd (str (fs/path cwd file))
-    (:root @state) (str (fs/path (:root @state) file))
-    :else (str (fs/path (client/default-dir) file))))
-
 ;; ---------------------------------------------------------------------------
 ;; tools
 
@@ -195,6 +188,12 @@
   (let [root (project-dir (arg args :cwd))
         port-file (str root "/.nrepl-port")
         wait-ms (or (arg args :waitMs) 120000)]
+    ;; a running eval holds the client, so reachable? can't tell a live
+    ;; server from a dead one: starting now would replace a live server's
+    ;; .nrepl-port with a second server's
+    (when (:busy? (client/status state))
+      (throw (ex-info "An eval is running. Wait, call nrepl_interrupt, or nrepl_disconnect, then start."
+                      {:type :busy})))
     (if (and (fs/exists? port-file) (reachable? state root))
       (mcp/tool-result (str "already running for " root " on port " (:port (client/status state))))
       (do
@@ -228,10 +227,16 @@
       (mcp/tool-result (str "no server started by nrepl_start in " root) :error? true)
       (let [pid (str/trim (slurp pid-file))]
         (when (= root (:root @state)) (client/disconnect! state))
-        (p/shell {:continue true :out :string :err :string} "kill" pid)
-        (fs/delete-if-exists pid-file)
-        (fs/delete-if-exists (str root "/.nrepl-port"))
-        (mcp/tool-result (str "stopped nREPL (pid " pid ") for " root))))))
+        (let [{:keys [exit err]} (p/shell {:continue true :out :string :err :string} "kill" pid)
+              gone? (or (zero? exit) (re-find #"(?i)no such process" (str err)))]
+          (if-not gone?
+            (mcp/tool-result (str "could not stop pid " pid ": " (str/trim (str err))) :error? true)
+            (do (fs/delete-if-exists pid-file)
+                (fs/delete-if-exists (str root "/.nrepl-port"))
+                (mcp/tool-result (if (zero? exit)
+                                   (str "stopped nREPL (pid " pid ") for " root)
+                                   (str "nREPL (pid " pid ") for " root
+                                        " was not running; removed its pid and port files"))))))))))
 
 (defn- exception-result [e]
   (let [{:keys [type] :as data} (ex-data e)]

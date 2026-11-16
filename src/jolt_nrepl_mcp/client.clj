@@ -180,23 +180,35 @@
 ;; ---------------------------------------------------------------------------
 ;; project discovery
 
-(defn default-dir
-  "Where the agent is working when it names no cwd. The launcher runs the
-  server from its own directory and exports the caller's as
-  JOLT_NREPL_MCP_CWD."
-  []
-  (some #(when-not (str/blank? %) %)
-        [(System/getenv "JOLT_NREPL_MCP_CWD")
-         (System/getenv "CLAUDE_PROJECT_DIR")
-         (System/getProperty "user.dir")]))
+(defn- plugin-dir?
+  "A plugin's own install directory: Kimi and Claude Code start the server
+  there, and it is never the project the agent means."
+  [dir]
+  (or (fs/exists? (fs/path dir "kimi.plugin.json"))
+      (fs/exists? (fs/path dir ".claude-plugin" "plugin.json"))))
 
-(defn canonical-dir [cwd]
-  (let [cwd (or cwd (default-dir))]
-    (when-not (and (string? cwd) (fs/absolute? cwd))
-      (fail :invalid-cwd "cwd must be an absolute directory" {:cwd cwd}))
-    (when-not (fs/directory? cwd)
-      (fail :invalid-cwd "cwd is not a directory" {:cwd cwd}))
-    (str (fs/real-path cwd))))
+(defn default-dir
+  "Where the agent is working when it names no cwd: the first of
+  JOLT_NREPL_MCP_CWD (the launcher exports the caller's directory),
+  CLAUDE_PROJECT_DIR and user.dir that is set and is not a plugin's install
+  directory, or nil."
+  ([] (default-dir [(System/getenv "JOLT_NREPL_MCP_CWD")
+                    (System/getenv "CLAUDE_PROJECT_DIR")
+                    (System/getProperty "user.dir")]))
+  ([candidates]
+   (some #(when-not (or (str/blank? %) (plugin-dir? %)) %) candidates)))
+
+(defn canonical-dir
+  ([cwd] (canonical-dir cwd nil))
+  ([cwd candidates]
+   (let [cwd (or cwd (if candidates (default-dir candidates) (default-dir)))]
+     (when (nil? cwd)
+       (fail :missing-cwd "No cwd given and no project in use: pass cwd, an absolute path inside the project."))
+     (when-not (and (string? cwd) (fs/absolute? cwd))
+       (fail :invalid-cwd "cwd must be an absolute directory" {:cwd cwd}))
+     (when-not (fs/directory? cwd)
+       (fail :invalid-cwd "cwd is not a directory" {:cwd cwd}))
+     (str (fs/real-path cwd)))))
 
 (defn find-root
   "The nearest directory at or above `dir` holding a .nrepl-port, or nil."

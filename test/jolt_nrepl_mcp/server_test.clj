@@ -76,6 +76,41 @@
           (p/shell {:continue true} "kill" (str/trim (slurp (str root "/.jolt/nrepl.pid")))))
         (fs/delete-tree root {:force true})))))
 
+(deftest start-while-busy-leaves-the-running-server-alone
+  (let [root (str (fs/create-temp-dir {:prefix "jnm-busy"}))
+        st (client/create-state)]
+    (try
+      (spit (str root "/deps.edn") "{:paths [\"src\"]}")
+      (is (false? (:error? (call st "nrepl_start" {"cwd" root}))))
+      (let [port (slurp (str root "/.nrepl-port"))
+            pid (slurp (str root "/.jolt/nrepl.pid"))
+            running (future (call st "nrepl_eval" {"cwd" root "code" "(Thread/sleep 1500)"}))]
+        (Thread/sleep 300)
+        (let [{:keys [text error?]} (call st "nrepl_start" {"cwd" root})]
+          (is (true? error?) text)
+          (is (re-find #"busy" text)))
+        (is (= port (slurp (str root "/.nrepl-port"))) "the live server's port file is kept")
+        (is (= pid (slurp (str root "/.jolt/nrepl.pid"))) "no second server")
+        (is (false? (:error? @running))))
+      (finally
+        (call st "nrepl_stop" {"cwd" root})
+        (fs/delete-tree root {:force true})))))
+
+(deftest stop-reports-a-server-that-was-already-gone
+  (let [root (str (fs/create-temp-dir {:prefix "jnm-gone"}))
+        st (client/create-state)]
+    (try
+      (spit (str root "/deps.edn") "{}")
+      (fs/create-dirs (str root "/.jolt"))
+      (spit (str root "/.jolt/nrepl.pid") "999999")
+      (spit (str root "/.nrepl-port") "1")
+      (let [{:keys [text]} (call st "nrepl_stop" {"cwd" root})]
+        (is (re-find #"was not running" text))
+        (is (not (re-find #"^stopped" text))))
+      (is (not (fs/exists? (str root "/.jolt/nrepl.pid"))))
+      (is (not (fs/exists? (str root "/.nrepl-port"))))
+      (finally (fs/delete-tree root {:force true})))))
+
 ;; --- the real stdio process -------------------------------------------------
 
 (defn- send-json [w msg] (.write w (str (json/write-str msg) "\n")) (.flush w))

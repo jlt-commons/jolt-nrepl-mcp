@@ -299,3 +299,19 @@
       (testing "the server still reports real reader errors"
         (is (true? (:error? (c/eval! st {:cwd cwd :ns "demo.kw" :code "::nope/x"})))))
       (finally (c/disconnect! st)))))
+
+(deftest default-dir-skips-plugin-install-directories
+  (let [plugin (str (fs/create-temp-dir {:prefix "jnm-plugin"}))
+        project (str (fs/create-temp-dir {:prefix "jnm-proj"}))]
+    (try
+      (spit (str plugin "/kimi.plugin.json") "{}")
+      (testing "the first directory that is not a plugin's own"
+        (is (= project (c/default-dir [nil "" plugin project]))))
+      (testing "a plugin directory alone is no default"
+        (is (nil? (c/default-dir [nil plugin]))))
+      (testing "so a call without cwd says to pass one"
+        (let [d (thrown-data #(c/canonical-dir nil [plugin]))]
+          (is (= :missing-cwd (:type d)))))
+      (finally
+        (fs/delete-tree plugin {:force true})
+        (fs/delete-tree project {:force true})))))
