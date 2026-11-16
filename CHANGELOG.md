@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.1 - 2026-11-16
+
+- Fixed: a call without `cwd` under Kimi used the plugin's install
+  directory as the project and could autostart an nREPL there. A plugin's
+  own directory is never a default now; the call asks for `cwd`.
+- Fixed: `nrepl_start` while an eval was running took the live server for
+  dead, deleted its `.nrepl-port` and started a second server. It is refused
+  as busy.
+- Fixed: `nrepl_stop` said "stopped" when `kill` failed. A server that is
+  already gone has its pid and port files removed and is reported as not
+  running; any other failure is an error.
+
 ## v0.4.0 - 2026-11-12
 
 - `nrepl_eval` sends each top-level form as its own eval and shows each with
