@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.2 - 2026-11-19
 
 - `nrepl_start` takes `aliases`, deps.edn aliases put on the server's
   classpath with `-A` (#4). Without it, a server starts with `:test` when
