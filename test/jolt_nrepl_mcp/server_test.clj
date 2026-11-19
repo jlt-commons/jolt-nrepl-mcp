@@ -230,6 +230,103 @@
           (is (not (fs/exists? (str dir "/.nrepl-port")))))
         (finally (fs/delete-tree dir {:force true}))))))
 
+(defn- alias-project []
+  (let [root (str (fs/create-temp-dir {:prefix "jnm-alias"}))]
+    (fs/create-dirs (str root "/test/demo"))
+    (spit (str root "/deps.edn")
+          "{:paths [\"src\"] :jolt/min-version \"0.8.0\" :aliases {:test {:extra-paths [\"test\"]}}}")
+    (spit (str root "/test/demo/a_test.clj")
+          "(ns demo.a-test (:require [clojure.test :refer [deftest is]]))\n(deftest adds (is (= 2 (+ 1 1))))\n")
+    root))
+
+(deftest start-puts-the-test-alias-on-the-classpath
+  (let [root (alias-project) st (client/create-state)]
+    (try
+      (testing "autostart adds :test when deps.edn defines it"
+        (let [{:keys [text error?]} (call st "nrepl_eval" {"cwd" root "code" "1"})]
+          (is (false? error?) text)
+          (is (re-find #"-A:test" text)))
+        (let [{:keys [text error?]} (call st "nrepl_test" {"cwd" root "ns" ["demo.a-test"]})]
+          (is (false? error?) text)
+          (is (re-find #"1 tests, 1 passed" text))))
+      (testing "aliases [] starts without it, and the test error says why"
+        (call st "nrepl_stop" {"cwd" root})
+        (let [{:keys [text error?]} (call st "nrepl_start" {"cwd" root "aliases" []})]
+          (is (false? error?) text)
+          (is (not (re-find #"-A:" text))))
+        (let [{:keys [text error?]} (call st "nrepl_test" {"cwd" root "ns" ["demo.a-test"]})]
+          (is (true? error?))
+          (is (re-find #"(?i)alias" text) text)))
+      (testing "a running server is reused, and the reply says aliases need a restart"
+        (let [{:keys [text]} (call st "nrepl_start" {"cwd" root "aliases" ["test"]})]
+          (is (re-find #"already running" text))
+          (is (re-find #"nrepl_stop" text))))
+      (finally
+        (call st "nrepl_stop" {"cwd" root})
+        (fs/delete-tree root {:force true})))))
+
+(deftest start-refuses-unsafe-aliases-and-quotes-a-launcher-path
+  (let [root (alias-project) st (client/create-state)]
+    (try
+      (let [{:keys [text error?]} (call st "nrepl_start" {"cwd" root "aliases" ["test; touch pwned"]})]
+        (is (true? error?))
+        (is (re-find #"alias" text))
+        (is (not (fs/exists? (str root "/pwned")))))
+      (testing "a launcher path with a space in it"
+        (let [dir (str root "/with space")
+              launcher (str dir "/jolt")]
+          (fs/create-dirs dir)
+          (spit launcher "#!/bin/sh\nexec jolt \"$@\"\n")
+          (fs/set-posix-file-permissions launcher "rwxr-xr-x")
+          (let [{:keys [text error?]} (call st "nrepl_start" {"cwd" root "command" launcher})]
+            (is (false? error?) text)
+            (is (re-find #"started nREPL" text))))
+        (testing "a relative launcher path is looked up in the project"
+          (call st "nrepl_stop" {"cwd" root})
+          (let [{:keys [text error?]} (call st "nrepl_start" {"cwd" root "command" "with space/jolt"})]
+            (is (false? error?) text)
+            (is (re-find #"started nREPL" text)))))
+      (finally
+        (call st "nrepl_stop" {"cwd" root})
+        (fs/delete-tree root {:force true})))))
+
+(deftest a-test-alias-that-cannot-resolve
+  ;; an unreachable git dep: jolt exits at once with "Error building classpath"
+  (let [root (str (fs/create-temp-dir {:prefix "jnm-baddep"}))
+        st (client/create-state)]
+    (try
+      (spit (str root "/deps.edn")
+            (str "{:paths [\"src\"] :jolt/min-version \"0.8.0\" :aliases {:test {:extra-deps"
+                 " {no/such {:git/url \"https://127.0.0.1:9/none.git\""
+                 " :git/sha \"0000000000000000000000000000000000000000\"}}}}}"))
+      (testing "the implicit default falls back to a start without it, and says so"
+        (let [{:keys [text error?]} (call st "nrepl_eval" {"cwd" root "code" "(+ 1 2)"})]
+          (is (false? error?) text)
+          (is (re-find #"without -A:test" text))
+          (is (re-find #"=> 3" text))))
+      (testing "an alias asked for by name fails, and fails fast"
+        (call st "nrepl_stop" {"cwd" root})
+        (let [t0 (System/currentTimeMillis)
+              {:keys [text error?]} (call st "nrepl_start" {"cwd" root "aliases" ["test"] "waitMs" 60000})]
+          (is (true? error?))
+          (is (re-find #"exited" text) text)
+          (is (< (- (System/currentTimeMillis) t0) 30000))))
+      (finally
+        (call st "nrepl_stop" {"cwd" root})
+        (fs/delete-tree root {:force true})))))
+
+(deftest default-aliases-reads-what-it-can
+  (let [dir (str (fs/create-temp-dir {:prefix "jnm-defal"}))
+        with (fn [text] (spit (str dir "/deps.edn") text) (s/default-aliases dir))]
+    (try
+      (is (= ["test"] (with "{:aliases {:test {:extra-paths [\"test\"]}}}")))
+      (is (= [] (with "{:aliases {:dev {:extra-paths [\"dev\"]}}}")))
+      (is (= [] (with "{:paths [\"src\"]}")))
+      (testing "a deps.edn edn can't read still shows its :test alias"
+        (is (= ["test"] (with "{:aliases {:test {:extra-paths [\"test\"]}} :x #\"re\"}")))
+        (is (= [] (with "{:aliases {:dev {}} :x #\"re\"}"))))
+      (finally (fs/delete-tree dir {:force true})))))
+
 (deftest tells-jolt-projects-from-others
   (let [dir (str (fs/create-temp-dir {:prefix "jnm-kind"}))
         deps (fn [text] (spit (str dir "/deps.edn") text) (s/jolt-project? dir))]

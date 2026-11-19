@@ -22,7 +22,7 @@ remembered. The server's `.nrepl-port` is found in `cwd` or any parent.
 | `nrepl_lookup` | Arglists, docstring and file:line of a var (`sym`, optional `ns`; aliases work). |
 | `nrepl_complete` | Vars/namespaces starting with a `prefix`. |
 | `nrepl_test` | Run clojure.test: `ns` (reloaded first) or `vars`. Counts, then each FAIL/ERROR with var, line, testing context, expected, actual. |
-| `nrepl_start` / `nrepl_stop` | Start (or reuse) `jolt nrepl-server` for the nearest `deps.edn`; stop one it started. |
+| `nrepl_start` / `nrepl_stop` | Start (or reuse) `jolt nrepl-server` for the nearest `deps.edn`; stop one it started. Starts with `-A:test` when `deps.edn` has a `:test` alias; `aliases` picks others (`[]` for none), `command` another launcher. |
 | `nrepl_status` | Connection, ns, print caps, ops. `scan: true` lists every nREPL server running on the machine with its directory. |
 | `nrepl_interrupt`, `nrepl_disconnect`, `nrepl_connect` | Housekeeping. |
 
