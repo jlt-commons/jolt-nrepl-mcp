@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- jolt-lsp dependency bumped from v0.1.0 to v0.4.0. `jolt-lsp.syntax`, the
+  only namespace loaded from it, is unchanged between the two tags.
+
 ## v0.4.1 - 2026-11-16
 
 - Fixed: a call without `cwd` under Kimi used the plugin's install

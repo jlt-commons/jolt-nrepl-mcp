@@ -5,8 +5,8 @@
  ;; startup and the built binary stay small.
  :deps {io.github.jlt-commons/jolt-lsp
         {:git/url "https://github.com/jlt-commons/jolt-lsp"
-         :git/tag "v0.1.0"
-         :git/sha "41004a1845af676e233ef5f62c443ef8bce2d5ba"}}
+         :git/tag "v0.4.0"
+         :git/sha "314e5c5c7a1fca6b51023ba6a5b6d19d88fc1a58"}}
  :aliases {;; jolt test
            :test {:extra-paths ["test"]
                   :main-opts ["-m" "jolt-nrepl-mcp.test-runner"]}
