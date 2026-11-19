@@ -202,7 +202,7 @@
   (let [root (str (fs/create-temp-dir {:prefix "jnm-auto"}))
         st (client/create-state)]
     (try
-      (spit (str root "/deps.edn") "{:paths [\"src\"]}")
+      (spit (str root "/deps.edn") "{:paths [\"src\"] :jolt/min-version \"0.8.0\"}")
       (let [{:keys [text error?]} (call st "nrepl_eval" {"cwd" root "code" "(+ 1 2)"})]
         (is (false? error?) text)
         (is (re-find #"started nREPL" text))
@@ -217,7 +217,36 @@
         (let [{:keys [text error?]} (call st "nrepl_eval" {"cwd" dir "code" "1"})]
           (is (true? error?))
           (is (re-find #"missing-port" text)))
+        (finally (fs/delete-tree dir {:force true})))))
+  (testing "a deps.edn that isn't a Jolt project, no start"
+    (let [dir (str (fs/create-temp-dir {:prefix "jnm-jvmproj"}))
+          st (client/create-state)]
+      (try
+        (spit (str dir "/deps.edn") "{:paths [\"src\"] :deps {org.clojure/clojure {:mvn/version \"1.12.3\"}}}")
+        (let [{:keys [text error?]} (call st "nrepl_eval" {"cwd" dir "code" "1"})]
+          (is (true? error?))
+          (is (re-find #"missing-port" text))
+          (is (re-find #"not a Jolt project" text))
+          (is (not (fs/exists? (str dir "/.nrepl-port")))))
         (finally (fs/delete-tree dir {:force true}))))))
+
+(deftest tells-jolt-projects-from-others
+  (let [dir (str (fs/create-temp-dir {:prefix "jnm-kind"}))
+        deps (fn [text] (spit (str dir "/deps.edn") text) (s/jolt-project? dir))]
+    (try
+      (is (deps "{:jolt/min-version \"0.8.25\" :paths [\"src\"]}"))
+      (is (deps "{:deps {io.github.jlt-commons/writ {:git/sha \"1\"}}}"))
+      (is (deps "{:deps {jolt-lang/nrepl {:git/sha \"1\"}}}"))
+      (is (deps "{:paths [\"src\"] :tasks {test {:task (jolt \"-M:test\")}}}"))
+      (is (deps ";; run the tests with jolt -M:test\n{:paths [\"src\"]}"))
+      (is (not (deps "{:paths [\"src\"] :deps {org.clojure/clojure {:mvn/version \"1.12.3\"}}}")))
+      (is (not (deps "{:paths [\"src\"]}")))
+      (is (not (deps "{:paths [\"src\"] :aliases {:tasks-old {:main-opts []}}}")))
+      (testing "a CI workflow that installs jolt doesn't count (docs sites do that)"
+        (fs/create-dirs (str dir "/.github/workflows"))
+        (spit (str dir "/.github/workflows/site.yml") "steps:\n  - uses: jlt-commons/setup-jolt@v1\n")
+        (is (not (deps "{:paths [\"src\"]}"))))
+      (finally (fs/delete-tree dir {:force true})))))
 
 (deftest parses-lsof-listeners
   (is (= [{:command "jolt" :pid 78627 :port 58762}

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Autostart only starts `jolt nrepl-server` for a Jolt project: a `deps.edn`
+  that mentions jolt or jlt-commons, or has `:tasks`. A JVM project with no
+  server gets the missing-port error, saying why, instead of a Jolt server in
+  the wrong runtime. `nrepl_start` still starts one anywhere when asked.
+- Fixed: against a JVM nREPL server the print caps never applied, because
+  the session binds `*print-length*`/`*print-level*` and only the root was
+  set. Printing an infinite seq ran the JVM out of heap and wedged the
+  server. The caps are now `set!` in the session, with the root as the
+  fallback for servers that don't bind them (jolt).
+- A live test against a JVM nREPL (`jolt-nrepl-mcp.jvm-test`) runs when the
+  `clojure` CLI is on PATH. The README has a JVM Clojure section.
 - jolt-lsp dependency bumped from v0.1.0 to v0.4.0. `jolt-lsp.syntax`, the
   only namespace loaded from it, is unchanged between the two tags.
 

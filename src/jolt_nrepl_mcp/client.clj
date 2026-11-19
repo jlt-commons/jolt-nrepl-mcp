@@ -234,15 +234,24 @@
   (let [v (System/getenv var)]
     (if (str/blank? v) default (let [n (parse-long (str/trim v))] (when (and n (pos? n)) n)))))
 
+(defn- cap-code
+  "Set `var` to `n` when it is nil. `set!` reaches a session's own binding (a
+  JVM nREPL binds the print vars per session, so a root value never shows
+  there); a server without that binding throws on `set!` and gets a root
+  value instead (jolt's)."
+  [var n]
+  (str " (when (nil? " var ") (try (set! " var " " n ")"
+       " (catch Throwable _ (alter-var-root #'" var " (constantly " n ")))))"))
+
 (defn- cap-printing!
-  "Give *print-length*/*print-level* root values when the server has none, and
+  "Give *print-length*/*print-level* values when the server has none, and
   record what they are. A server where this fails is left as it is."
   [state]
   (let [len (env-limit "JOLT_NREPL_MCP_PRINT_LENGTH" default-print-length)
         lvl (env-limit "JOLT_NREPL_MCP_PRINT_LEVEL" default-print-level)
         code (str "(do"
-                  (when len (str " (when (nil? *print-length*) (alter-var-root #'*print-length* (constantly " len ")))"))
-                  (when lvl (str " (when (nil? *print-level*) (alter-var-root #'*print-level* (constantly " lvl ")))"))
+                  (when len (cap-code "*print-length*" len))
+                  (when lvl (cap-code "*print-level*" lvl))
                   " (pr-str {:length *print-length* :level *print-level*}))")]
     (try
       (let [{:keys [value error?]} (exec! state {:op "eval" :code code :ns "user"}

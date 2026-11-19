@@ -246,10 +246,26 @@
 (defn- autostart? []
   (not= "0" (System/getenv "JOLT_NREPL_MCP_AUTOSTART")))
 
+(defn jolt-project?
+  "Whether the project at `root` looks like a Jolt project, so that starting
+  `jolt nrepl-server` for it is right: its deps.edn mentions jolt or
+  jlt-commons (a :jolt/ key, a dep, a comment) or has :tasks, which JVM
+  tools.deps doesn't read. A JVM project's deps.edn has none of these. CI
+  files don't count: docs-site workflows install jolt for JVM projects too."
+  [root]
+  (let [deps (fs/path root "deps.edn")]
+    (boolean
+     (when (fs/exists? deps)
+       (when-let [text (try (slurp (str deps)) (catch Throwable _ nil))]
+         (or (re-find #"(?i)jolt|jlt-commons" text)
+             (re-find #":tasks[\s{]" text)))))))
+
 (defn- with-server
   "Run `f`; when it fails because the project has no running server (no
-  .nrepl-port, or a stale one) and the project has a deps.edn, start one and
-  run `f` again. Returns [started-message-or-nil result]."
+  .nrepl-port, or a stale one) and the project is a Jolt project with a
+  deps.edn, start one and run `f` again. Any other project keeps the error,
+  since a Jolt server is the wrong runtime for it. Returns
+  [started-message-or-nil result]."
   [state cwd f]
   (try
     [nil (f)]
@@ -257,12 +273,20 @@
       (let [{:keys [type]} (ex-data e)
             root (when (and (#{:missing-port :connection-refused} type) (autostart?))
                    (try (project-dir cwd) (catch Throwable _ nil)))]
-        (if (and root (fs/exists? (fs/path root "deps.edn")))
+        (cond
+          (not (and root (fs/exists? (fs/path root "deps.edn")))) (throw e)
+          (not (jolt-project? root))
+          (throw (ex-info (str (ex-message e) " Not starting one: " root
+                               " is not a Jolt project (its deps.edn names neither jolt nor jlt-commons),"
+                               " so start the project's own nREPL server, or call nrepl_start"
+                               " to run jolt nrepl-server there anyway.")
+                          (assoc (ex-data e) :autostart :skipped)
+                          e))
+          :else
           (let [r (start state {"cwd" root})]
             (if (:isError r)
               (throw e)
-              [(:text (first (:content r))) (f)]))
-          (throw e))))))
+              [(:text (first (:content r))) (f)])))))))
 
 (defn- with-started [started {:keys [content] :as result}]
   (if started

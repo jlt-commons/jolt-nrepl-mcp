@@ -26,9 +26,12 @@ remembered. The server's `.nrepl-port` is found in `cwd` or any parent.
 | `nrepl_status` | Connection, ns, print caps, ops. `scan: true` lists every nREPL server running on the machine with its directory. |
 | `nrepl_interrupt`, `nrepl_disconnect`, `nrepl_connect` | Housekeeping. |
 
-A project with a `deps.edn` and no server (or a stale `.nrepl-port`) gets one
-started on the first call; the result says `started nREPL …`. Without a
-`deps.edn`, run `nrepl_start` yourself, or find a running server with
+A Jolt project (its `deps.edn` mentions jolt or jlt-commons, or has `:tasks`)
+with no server (or a stale `.nrepl-port`) gets one started on the first call;
+the result says `started nREPL …`. Any other project is left alone, because
+`jolt nrepl-server` would be the wrong runtime for a JVM project: start its own
+server (the tools connect to a JVM nREPL too). Without a `deps.edn`, or to
+start a Jolt server anyway, run `nrepl_start` yourself, or find a running server with
 `nrepl_status` `scan: true` and `nrepl_connect` to its port.
 
 Printing is capped (`*print-length*` 200, `*print-level*` 50), so `(range)`

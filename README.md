@@ -25,9 +25,21 @@ MCP server for navigation, diagnostics and refactors.
 
 `cwd` is optional on every tool: it defaults to the last project used, then to
 the directory the agent launched the server from. `.nrepl-port` is looked up in
-`cwd` and its parents. When there is none (or it is stale) and the project has
-a `deps.edn`, the tools start a server with `nrepl_start` first and say so;
-`JOLT_NREPL_MCP_AUTOSTART=0` turns that off.
+`cwd` and its parents. When there is none (or it is stale) and the project is a
+Jolt project, the tools start a server with `nrepl_start` first and say so;
+`JOLT_NREPL_MCP_AUTOSTART=0` turns that off. A Jolt project is one whose
+`deps.edn` mentions `jolt` or `jlt-commons` (a `:jolt/min-version` key, a dep,
+even a comment) or has `:tasks`. Any other project gets the missing-port error
+and no server, since `jolt nrepl-server` would be the wrong runtime for it;
+`nrepl_start` still starts one there when asked.
+
+### JVM Clojure
+
+The tools also work against a JVM nREPL server (`nrepl/nrepl`): eval, load,
+lookup, complete, test and interrupt. Start that server yourself (for example
+`clojure -M:nrepl`) so the project has a live `.nrepl-port`, and the tools
+connect to it. A JVM project's `deps.edn` doesn't count as a Jolt project, so
+the tools never start a Jolt server in its place.
 
 ### Evaluation
 
@@ -37,9 +49,10 @@ of a multi-form eval). The first error stops the rest and the result says how
 many forms were skipped. Code the client can't read on its own, like
 `::alias/kw`, goes as one eval and the server reads it.
 
-On connect the client gives `*print-length*` and `*print-level*` root values
-(200 and 50) if the server has none, so printing an infinite seq returns
-instead of hanging until the timeout. Set `JOLT_NREPL_MCP_PRINT_LENGTH` /
+On connect the client gives `*print-length*` and `*print-level*` values (200
+and 50) if the server has none, so printing an infinite seq returns instead of
+hanging until the timeout. They are set in the session when the server binds
+them per session (a JVM nREPL does), and as root values otherwise (jolt). Set `JOLT_NREPL_MCP_PRINT_LENGTH` /
 `JOLT_NREPL_MCP_PRINT_LEVEL` to change them, or to 0 to leave them unset.
 `nrepl_lookup` and `nrepl_test` print their own results without the caps.
 
@@ -129,6 +142,8 @@ tool calls around them.
 
 The suite starts real `jolt nrepl-server` processes, one with the default
 middleware (fetched on first run), and drives the stdio server end to end.
+`jolt-nrepl-mcp.jvm-test` runs against a JVM nREPL when the `clojure` CLI is on
+PATH, and skips otherwise.
 
 ## Credits
 
