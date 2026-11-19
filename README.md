@@ -19,7 +19,7 @@ MCP server for navigation, diagnostics and refactors.
 | `nrepl_lookup` | A var's arglists, docstring and file:line, resolved in a namespace. |
 | `nrepl_complete` | Completions for a prefix from the running image. |
 | `nrepl_test` | Run clojure.test namespaces or single vars; counts plus each failure with context, expected and actual. |
-| `nrepl_start` / `nrepl_stop` | Start `jolt nrepl-server` for the project in the background, or stop it. |
+| `nrepl_start` / `nrepl_stop` | Start `jolt nrepl-server` for the project in the background, or stop it. `aliases` puts deps.edn aliases on its classpath (`-A`); `command` picks the launcher. |
 | `nrepl_status` | Connection, ns, print caps and ops; `scan: true` lists the nREPL servers running on the machine. |
 | `nrepl_connect`, `nrepl_interrupt`, `nrepl_disconnect` | Connection management. |
 
@@ -32,6 +32,18 @@ Jolt project, the tools start a server with `nrepl_start` first and say so;
 even a comment) or has `:tasks`. Any other project gets the missing-port error
 and no server, since `jolt nrepl-server` would be the wrong runtime for it;
 `nrepl_start` still starts one there when asked.
+
+A server starts with the `:test` alias (`-A:test`) when `deps.edn` defines
+one, so test namespaces kept in an alias's `:extra-paths` load and
+`nrepl_test` finds them. Pass `aliases` to `nrepl_start` to choose others, such
+as `["test" "dev"]`, or `[]` for none. If the default `:test` alias keeps the
+server from starting (a dep that can't resolve offline, say), it starts again
+without it and the reply says so; an alias you name keeps the error. A
+`command` that passes `-A` itself gets no default. Aliases apply when a server
+starts; to change them on a running one, `nrepl_stop` it first. A server that
+exits before it comes up is reported at once, with the log tail. `command` runs another
+launcher, such as a pinned `jolt` binary; a path to a file is quoted, so a
+space in it is fine.
 
 ### JVM Clojure
 

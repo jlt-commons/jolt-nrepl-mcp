@@ -2,6 +2,7 @@
   "The MCP server: tool definitions, compact text rendering, and stdio loop."
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
+            [clojure.edn :as edn]
             [clojure.pprint :as pprint]
             [clojure.string :as str]
             [jolt-nrepl-mcp.client :as client]
@@ -66,6 +67,8 @@
     :inputSchema {:type "object"
                   :properties {:cwd cwd-prop
                                :command {:type "string" :description "Launcher to run instead of `jolt`, e.g. a clone's bin/jolt"}
+                               :aliases {:type "array" :items {:type "string"}
+                                         :description "deps.edn aliases whose paths and deps go on the server's classpath (-A), e.g. [\"test\" \"dev\"]. Default: [\"test\"] when deps.edn defines :test, else none; [] for none."}
                                :waitMs {:type "integer" :minimum 1000 :description "How long to wait for the port, default 120000"}}}}
    {:name "nrepl_stop"
     :description "Stop an nREPL server that nrepl_start started for this project."
@@ -141,7 +144,11 @@
 
 (defn- test-text [{:keys [counts problems out error]} max]
   (if error
-    (str "error: " (truncate error max))
+    (str "error: " (truncate error max)
+         (when (re-find #"Could not locate" error)
+           (str "\nIf the namespace exists, check it is on the server's classpath: one under a"
+                " deps.edn alias's :extra-paths needs that alias, so nrepl_stop, then nrepl_start"
+                " with aliases naming it (nrepl_status shows the root; .jolt/nrepl.log the start).")))
     (let [{:keys [test pass fail error]} counts]
       (str/join "\n"
                 (concat
@@ -184,10 +191,83 @@
 (defn- reachable? [state cwd]
   (try (client/connect! state {:cwd cwd}) true (catch Throwable _ false)))
 
+(defn default-aliases
+  "The aliases a server starts with when none are given: :test when the
+  project's deps.edn defines it, so test namespaces kept in an alias's
+  :extra-paths load. A deps.edn that edn can't read (a regex, ::kw) is
+  checked as text for a :test alias map instead."
+  [root]
+  (let [text (try (slurp (str (fs/path root "deps.edn"))) (catch Throwable _ ""))
+        aliases (try (:aliases (edn/read-string text)) (catch Throwable _ ::unreadable))]
+    (cond (= ::unreadable aliases) (if (re-find #":test\s*\{" text) ["test"] [])
+          (and (map? aliases) (contains? aliases :test)) ["test"]
+          :else [])))
+
+(defn- alias-names
+  "Alias names without a leading colon. Each goes into `sh -c`, so anything
+  but a plain alias name is refused."
+  [aliases]
+  (mapv (fn [a]
+          (let [n (str/replace (str a) #"^:" "")]
+            (when-not (re-matches #"[A-Za-z0-9][A-Za-z0-9._/-]*" n)
+              (throw (ex-info (str "Not a deps alias name: " (pr-str a)) {:type :invalid-alias})))
+            n))
+        aliases))
+
+(defn- shell-quote [s] (str "'" (str/replace s "'" "'\\''") "'"))
+
+(defn- launcher
+  "The launcher as shell words. A path to an existing file is quoted, so a
+  space in it survives; anything else (`jolt`, or a launcher with its own
+  flags) goes in as written. The shell runs in `root`, so a relative path
+  is looked up there."
+  [root command]
+  (cond (nil? command) "jolt"
+        (fs/exists? (fs/path root command)) (shell-quote command)
+        :else command))
+
+(defn- alive? [pid]
+  (zero? (:exit (p/shell {:continue true :out :string :err :string} "kill" "-0" pid))))
+
+(defn- log-tail [root]
+  (let [log (str root "/.jolt/nrepl.log")]
+    (when (fs/exists? log) (truncate (slurp log) 3000))))
+
+(defn- launch!
+  "Start `cmd nrepl-server 0` in `root` and wait for it to answer. Returns
+  {:pid ..} once it does, or {:error text} when the process exits first or
+  `wait-ms` runs out."
+  [state root cmd wait-ms]
+  (let [port-file (str root "/.nrepl-port")
+        pid (-> (p/shell {:dir root :out :string}
+                         "sh" "-c" (str "nohup " cmd " nrepl-server 0 >> .jolt/nrepl.log 2>&1 < /dev/null & echo $!"))
+                :out str/trim)
+        deadline (+ (System/currentTimeMillis) wait-ms)]
+    (spit (str root "/.jolt/nrepl.pid") pid)
+    (loop []
+      (cond
+        (and (fs/exists? port-file) (reachable? state root)) {:pid pid}
+        ;; checked after the port, so a launcher that hands off to a child
+        ;; and exits still counts once the child answers
+        (not (alive? pid))
+        (do (fs/delete-if-exists (str root "/.jolt/nrepl.pid"))
+            {:error (str "nREPL (" cmd ") exited before it came up. Log tail:\n" (log-tail root))})
+        (< deadline (System/currentTimeMillis))
+        {:error (str "nREPL did not come up within " wait-ms "ms. Log tail:\n" (log-tail root))}
+        :else (do (Thread/sleep 100) (recur))))))
+
 (defn- start [state args]
   (let [root (project-dir (arg args :cwd))
         port-file (str root "/.nrepl-port")
-        wait-ms (or (arg args :waitMs) 120000)]
+        wait-ms (or (arg args :waitMs) 120000)
+        command (arg args :command)
+        given (let [g (arg args :aliases)] (if (string? g) [g] g))
+        ;; the :test default is implicit: skipped when the launcher already
+        ;; passes -A itself, and dropped again if it keeps the server down
+        implicit? (and (nil? given) (not (re-find #"(^|\s)-A" (str command))))
+        aliases (alias-names (cond (some? given) given implicit? (default-aliases root) :else []))
+        a-flag (fn [as] (when (seq as) (str "-A:" (str/join ":" as))))
+        cmd-for (fn [as] (str (launcher root command) (when-let [f (a-flag as)] (str " " f))))]
     ;; a running eval holds the client, so reachable? can't tell a live
     ;; server from a dead one: starting now would replace a live server's
     ;; .nrepl-port with a second server's
@@ -195,30 +275,23 @@
       (throw (ex-info "An eval is running. Wait, call nrepl_interrupt, or nrepl_disconnect, then start."
                       {:type :busy})))
     (if (and (fs/exists? port-file) (reachable? state root))
-      (mcp/tool-result (str "already running for " root " on port " (:port (client/status state))))
+      (mcp/tool-result (str "already running for " root " on port " (:port (client/status state))
+                            (when (some? given)
+                              "; aliases apply to a new server only, so nrepl_stop it first to change them")))
       (do
         (fs/delete-if-exists port-file)
         (fs/create-dirs (str root "/.jolt"))
-        (let [cmd (or (arg args :command) "jolt")
-              pid (-> (p/shell {:dir root :out :string}
-                               "sh" "-c" (str "nohup " cmd " nrepl-server 0 >> .jolt/nrepl.log 2>&1 < /dev/null & echo $!"))
-                      :out str/trim)
-              deadline (+ (System/currentTimeMillis) wait-ms)]
-          (spit (str root "/.jolt/nrepl.pid") pid)
-          (loop []
-            (cond
-              (and (fs/exists? port-file) (reachable? state root))
-              (mcp/tool-result (str "started nREPL for " root " on port " (:port (client/status state))
-                                    " (pid " pid ", log .jolt/nrepl.log)"))
-
-              (< deadline (System/currentTimeMillis))
-              (mcp/tool-result (str "nREPL did not come up within " wait-ms "ms. Log tail:\n"
-                                    (let [log (str root "/.jolt/nrepl.log")]
-                                      (when (fs/exists? log)
-                                        (truncate (slurp log) 3000))))
-                               :error? true)
-
-              :else (do (Thread/sleep 100) (recur)))))))))
+        (let [first-try (launch! state root (cmd-for aliases) wait-ms)
+              retry? (and (:error first-try) implicit? (seq aliases))
+              {:keys [pid error]} (if retry? (launch! state root (cmd-for []) wait-ms) first-try)]
+          (if error
+            (mcp/tool-result (if retry? (str (:error first-try) "\n\nWithout " (a-flag aliases) ": " error) error)
+                             :error? true)
+            (mcp/tool-result (str "started nREPL for " root " on port " (:port (client/status state))
+                                  (cond retry? (str " without " (a-flag aliases)
+                                                    ", which kept it from starting (see .jolt/nrepl.log)")
+                                        (seq aliases) (str " with " (a-flag aliases)))
+                                  " (pid " pid ", log .jolt/nrepl.log)"))))))))
 
 (defn- stop [state args]
   (let [root (project-dir (arg args :cwd))

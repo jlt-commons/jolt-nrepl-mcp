@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- `nrepl_start` takes `aliases`, deps.edn aliases put on the server's
+  classpath with `-A` (#4). Without it, a server starts with `:test` when
+  deps.edn defines that alias, so `nrepl_test` finds test namespaces kept in
+  an alias's `:extra-paths`; `[]` starts with none. If that default keeps the
+  server from starting, it starts again without it and says so. Alias names
+  are checked before they reach the shell.
+- `nrepl_start` reports a server that exits before it comes up at once,
+  instead of waiting out `waitMs`.
+- `nrepl_test` adds a hint to a "Could not locate" error: the namespace may
+  need a deps alias on the server's classpath.
+- A `command` that is a path to a file is quoted, so a launcher path with a
+  space in it works. A relative path is looked up in the project.
 - Autostart only starts `jolt nrepl-server` for a Jolt project: a `deps.edn`
   that mentions jolt or jlt-commons, or has `:tasks`. A JVM project with no
   server gets the missing-port error, saying why, instead of a Jolt server in
