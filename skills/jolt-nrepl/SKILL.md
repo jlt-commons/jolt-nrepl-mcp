@@ -130,11 +130,13 @@ will not reproduce. Before calling work done or committing:
 3. **Run the project's test task** (`jolt test`), not only `nrepl_test`.
 
 `nrepl_test` and `(require ... :reload)` read from the server's source
-roots. When a namespace was loaded some other way and its file is not on
-them (a server started without the `:test` alias, then a test file loaded by
-path), the reload finds nothing and the old definitions run. If a test you
-just added is missing from the counts, restart the server with the right
-`aliases` (`nrepl_start`) or `nrepl_load_file` the file.
+roots. A namespace loaded some other way, from a file that is not on them (a
+server started without the `:test` alias, then a test file loaded by path),
+cannot be reloaded: Jolt after 0.8.28 throws `FileNotFoundException` naming
+the file it was loaded from; 0.8.28 and earlier find nothing and keep the
+old definitions without a word, so a test you just added is missing from
+the counts. Either way, restart the server with the right `aliases`
+(`nrepl_start`) or `nrepl_load_file` the file.
 
 ## Make the running system reachable
 
