@@ -115,6 +115,35 @@ More inspection moves:
   redefinition captured in a closure: restart that component, or re-run the
   code path, after reloading.
 
+## Keep the session and the files in step
+
+The session drifts from the files: a REPL-only redefinition, a capture def,
+a var whose defn was since deleted or renamed (it stays interned), a
+namespace loaded with `load-file` from a path the server's source roots do
+not have. Each makes something work in the session that a fresh process
+will not reproduce. Before calling work done or committing:
+
+1. **Cold load.** `jolt -e "(require 'my.ns)"` (or `jolt -M:test -e ...` for
+   a test namespace) in a fresh process, for every namespace you changed.
+2. **Read the diff.** Check the files say what you tested: `git diff`, or
+   jolt-lsp's `jolt_structural_diff` against `HEAD`.
+3. **Run the project's test task** (`jolt test`), not only `nrepl_test`.
+
+`nrepl_test` and `(require ... :reload)` read from the server's source
+roots. When a namespace was loaded some other way and its file is not on
+them (a server started without the `:test` alias, then a test file loaded by
+path), the reload finds nothing and the old definitions run. If a test you
+just added is missing from the counts, restart the server with the right
+`aliases` (`nrepl_start`) or `nrepl_load_file` the file.
+
+## Make the running system reachable
+
+State a closure holds cannot be inspected from the REPL. Keep a running
+system in a top-level `(defonce system (atom nil))` that the start function
+`reset!`s (Integrant's `ig/init`, mount, or your own), so the session can
+`(keys @system)`, snapshot a component with `(def snap @(:db @system))`, and
+test pure functions against the snapshot without touching the live system.
+
 ## Discover before writing
 
 Before using an API you are not sure of, ask the running image.
