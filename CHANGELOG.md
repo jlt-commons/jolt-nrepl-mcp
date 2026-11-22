@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.3 - 2026-11-22
 
 - Needs jolt 0.8.26 or later (`:jolt/min-version`). From 0.8.26 jolt's nREPL
   server starts evals in `user` and keeps each session's namespace
@@ -16,6 +16,12 @@
 - The interrupt middleware example and the tests use jolt-lang/nrepl v0.4.6.
   v0.4.3 saved a one-off `:ns` into the session, so a lookup or test run
   moved it back to `user`.
+- The `jolt-nrepl` skill, synced from jolt-skills, has two new sections. One
+  covers keeping the session and the files in step before you commit, and
+  what happens when a namespace loaded from outside the source roots is
+  reloaded. The other covers keeping a running system in a top-level atom so
+  the REPL can reach it.
+- CI lints with jolt-lsp 0.6.0.
 
 ## v0.4.2 - 2026-11-19
 
