@@ -60,9 +60,11 @@
   (when *jvm*
     (let [st (c/create-state) cwd (:root *jvm*)]
       (try
-        (c/eval! st {:cwd cwd :code "(require 'demo.jvm)"})
+        (c/eval! st {:cwd cwd :code "(require 'demo.jvm) (in-ns 'demo.jvm)"})
         (is (= "Say hi." (:doc (c/lookup! st {:cwd cwd :sym "demo.jvm/greet"}))))
         (let [{:keys [counts]} (c/test! st {:cwd cwd :ns ["demo.jvm"]})]
           (is (= 1 (:test counts)))
           (is (= 0 (+ (:fail counts) (:error counts)))))
+        (testing "the session's ns survives the lookup and the test run"
+          (is (= "\"demo.jvm\"" (:value (c/eval! st {:cwd cwd :code "(clojure.core/str clojure.core/*ns*)"})))))
         (finally (c/disconnect! st))))))

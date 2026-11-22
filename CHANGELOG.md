@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Needs jolt 0.8.26 or later (`:jolt/min-version`). From 0.8.26 jolt's nREPL
+  server starts evals in `user` and keeps each session's namespace
+  (jolt-lang/jolt#1564), so the client no longer sends a namespace of its own
+  with every eval or forces `user` on connect.
+- Fixed: an eval with an explicit `ns` moved the session into that namespace
+  for later evals. It now applies to that call only, following any `in-ns`
+  among its forms.
+- Fixed: `nrepl_test` reloaded `clojure.test` and `clojure.string` along with
+  the test namespaces, because `:reload` covers every namespace in its
+  `require`. On jolt 0.8.27 that dropped `clojure.string`'s docstrings, so a
+  later `nrepl_lookup` showed none. Only the test namespaces are reloaded now.
+- The interrupt middleware example and the tests use jolt-lang/nrepl v0.4.6.
+  v0.4.3 saved a one-off `:ns` into the session, so a lookup or test run
+  moved it back to `user`.
+
 ## v0.4.2 - 2026-11-19
 
 - `nrepl_start` takes `aliases`, deps.edn aliases put on the server's

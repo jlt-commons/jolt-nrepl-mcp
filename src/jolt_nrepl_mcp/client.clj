@@ -6,9 +6,9 @@
   mistaken for the answer to the next one. One request at a time; a second
   while one is active is refused as :busy rather than queued behind it.
 
-  The client tracks the namespace each eval ends in and sends it with the next
-  one. jolt's built-in handler does not keep *ns* per session, and an agent
-  that ran (ns foo) expects to still be in foo."
+  The server keeps each session's *ns* (jolt >= 0.8.26, any JVM nREPL); the
+  client only records the namespace an eval ends in, to report it and to
+  resolve lookups and completions there."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [jolt-nrepl-mcp.bencode :as bencode]
@@ -272,14 +272,10 @@
         (when-not (and (:complete? clone) (:complete? desc))
           (fail :connection-timeout "nREPL handshake did not complete"))
         (let [session (some #(get % "new-session") (:msgs clone))
-              ops (set (mapcat #(keys (get % "ops")) (:msgs desc)))
-              same-project? (= root (:root @state))]
+              ops (set (mapcat #(keys (get % "ops")) (:msgs desc)))]
+          ;; a new session starts in the server's own default ns (user)
           (swap! state merge {:conn conn :root root :host host :port port
-                              :session session :ops ops}
-                 ;; jolt 0.8.25's built-in server starts every eval in
-                 ;; clojure.core (jolt-lang/jolt#1564); an nREPL session is
-                 ;; expected to start in user. Harmless on fixed servers.
-                 (when-not same-project? {:ns "user"}))
+                              :session session :ops ops :ns nil})
           (cap-printing! state)
           (status state)))
       (catch Throwable e
@@ -342,13 +338,13 @@
            (catch Throwable _ false)))))
 
 (defn- exec!
-  "Send one op and collect its result. `track-ns?` false keeps the
-  session's namespace where it is (internal evals: lookup, test runs)."
+  "Send one op and collect its result. `track-ns?` false leaves the recorded
+  namespace alone (internal evals: lookup, test runs). No :ns is added: the
+  session's own *ns* applies unless `msg` names one for this eval."
   [state msg timeout-ms & [{:keys [track-ns?] :or {track-ns? true}}]]
-  (let [{:keys [conn session ns]} @state
+  (let [{:keys [conn session]} @state
         msg (cond-> msg
-              session (assoc :session session)
-              (and ns (not (:ns msg)) (= "eval" (:op msg))) (assoc :ns ns))
+              session (assoc :session session))
         eval? (= "eval" (:op msg))
         {:keys [msgs complete? closed? id queue]}
         (request conn msg timeout-ms #(swap! state assoc :active-id %))
@@ -359,7 +355,7 @@
                    ;; a load-file is a load: its ns form does not switch the
                    ;; session, and a server that got no :ns reports its own
                    ;; default, which must not become the session's
-                   (when (and ns (not error?) eval? track-ns?) (swap! state assoc :ns ns))
+                   (when (and ns (not error?) eval? track-ns? (not (:ns msg))) (swap! state assoc :ns ns))
                    (cond-> (merge {:value (last values)
                                    :out out :err err
                                    :ns (if eval? (or ns (:ns @state)) (:ns @state))
@@ -414,10 +410,12 @@
     (if (< (count fs) 2)
       (exec! state (cond-> {:op "eval" :code code} ns (assoc :ns ns)) timeout-ms)
       (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
-        (loop [[f & more] fs, done []]
+        ;; an explicit ns runs the whole call there, following any in-ns
+        ;; along the way; without one each form runs in the session's ns
+        (loop [[f & more] fs, done [], cur ns]
           (let [left (max 1 (- deadline (System/currentTimeMillis)))
                 r (try
-                    (exec! state (cond-> {:op "eval" :code f} (and ns (empty? done)) (assoc :ns ns)) left)
+                    (exec! state (cond-> {:op "eval" :code f} cur (assoc :ns cur)) left)
                     (catch clojure.lang.ExceptionInfo e
                       (if (seq done)
                         (throw (ex-info (str (ex-message e) " " (count done) " earlier form(s) completed.")
@@ -425,7 +423,7 @@
                         (throw e))))
                 done (conj done (assoc r :code f))]
             (if (and (seq more) (not (:error? r)))
-              (recur more done)
+              (recur more done (when cur (or (:ns r) cur)))
               (let [last-r (peek done)]
                 (cond-> (assoc last-r
                                :forms (mapv #(dissoc % :status) done)
@@ -618,9 +616,13 @@
         (let [t (timeout timeout-ms)
               loads (distinct (concat nss (map #(first (str/split % #"/" 2)) vars)))
               req (exec! state {:op "eval" :ns "user" :code
-                                (str "(require 'clojure.test 'clojure.string "
-                                     (str/join " " (map #(str "'" %) loads))
-                                     (when reload? " :reload") ")")}
+                                ;; :reload covers every ns in its require, so the
+                                ;; libraries go in one of their own: reloading
+                                ;; clojure.string dropped its docstrings (jolt 0.8.27)
+                                (str "(require 'clojure.test 'clojure.string)"
+                                     (when (seq loads)
+                                       (str " (require " (str/join " " (map #(str "'" %) loads))
+                                            (when reload? " :reload") ")")))}
                          t {:track-ns? false})]
           (if (:error? req)
             {:error (str/trim (str (not-empty (:err req)) (:ex req)))}

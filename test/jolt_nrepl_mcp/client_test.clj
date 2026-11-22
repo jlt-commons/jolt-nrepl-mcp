@@ -8,7 +8,7 @@
             [jolt-nrepl-mcp.client :as c]))
 
 (def nrepl-dep
-  "jolt-lang/nrepl {:git/url \"https://github.com/jolt-lang/nrepl\" :git/tag \"v0.4.3\" :git/sha \"8ada4beeb100a391045ec2d93eb566b476fb46f7\"}")
+  "jolt-lang/nrepl {:git/url \"https://github.com/jolt-lang/nrepl\" :git/tag \"v0.4.6\" :git/sha \"29c92b7a30824230cb7930064a50a4fb89490db7\"}")
 
 (defn wait-for-port [root]
   (let [port-file (str root "/.nrepl-port")
@@ -69,17 +69,28 @@
           (is (= "λ😀\n" (:err r)))))
       (finally (c/disconnect! st)))))
 
-(deftest namespace-persists-across-evals-even-without-sessions
-  ;; jolt's built-in handler does not keep *ns* per session; the client
-  ;; carries the last namespace forward on every eval.
-  (let [st (c/create-state) cwd (:root *base*)]
-    (try
-      (c/eval! st {:cwd cwd :code "(ns demo.scratch) (def answer 42)"})
-      (is (= "demo.scratch" (:ns (c/eval! st {:cwd cwd :code "answer"}))))
-      (is (= "42" (:value (c/eval! st {:cwd cwd :code "answer"}))))
-      (testing "an explicit ns wins"
-        (is (= "\"clojure.string\"" (:value (c/eval! st {:cwd cwd :ns "clojure.string" :code "(str *ns*)"})))))
-      (finally (c/disconnect! st)))))
+(deftest the-session-keeps-its-namespace
+  ;; the server keeps *ns* per session (jolt >= 0.8.26, jolt-lang/jolt#1564);
+  ;; the client sends no :ns of its own
+  (doseq [srv [*base* *rich*]]
+    (let [st (c/create-state) cwd (:root srv)]
+      (try
+        (is (= "\"user\"" (:value (c/eval! st {:cwd cwd :code "(str *ns*)"}))))
+        (c/eval! st {:cwd cwd :code "(ns demo.scratch) (def answer 42)"})
+        (is (= "demo.scratch" (:ns (c/eval! st {:cwd cwd :code "answer"}))))
+        (is (= "42" (:value (c/eval! st {:cwd cwd :code "answer"}))))
+        (testing "an explicit ns is for that eval, and threads through its forms"
+          (let [r (c/eval! st {:cwd cwd :ns "clojure.string" :code "(str *ns*) (str *ns*)"})]
+            (is (= ["\"clojure.string\"" "\"clojure.string\""] (mapv :value (:forms r))))))
+        (testing "internal evals (lookup, tests, print caps) leave it where it is"
+          (c/lookup! st {:cwd cwd :sym "clojure.string/join"})
+          ;; a var test! can reload without touching clojure.core
+          (c/eval! st {:cwd cwd :ns "user" :code "(ns demo.ns-kept-test (:require [clojure.test :refer [deftest is]])) (deftest t (is true))"})
+          (c/test! st {:cwd cwd :vars ["demo.ns-kept-test/t"]})
+          (testing "and a test run reloads only the test ns, not clojure.string"
+            (is (re-find #"separated by" (str (:doc (c/lookup! st {:cwd cwd :sym "clojure.string/join"}))))))
+          (is (= "\"demo.scratch\"" (:value (c/eval! st {:cwd cwd :code "(str *ns*)"})))))
+        (finally (c/disconnect! st))))))
 
 (deftest errors-are-results-not-exceptions
   (let [st (c/create-state) cwd (:root *base*)]

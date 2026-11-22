@@ -181,7 +181,7 @@ and restart the server:
 
 ```clojure
 {:deps {jolt-lang/nrepl {:git/url "https://github.com/jolt-lang/nrepl"
-                         :git/tag "v0.4.3"
-                         :git/sha "8ada4beeb100a391045ec2d93eb566b476fb46f7"}}
+                         :git/tag "v0.4.6"
+                         :git/sha "29c92b7a30824230cb7930064a50a4fb89490db7"}}
  :nrepl/middleware [nrepl.middleware/default-middleware]}
 ```

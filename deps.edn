@@ -1,4 +1,4 @@
-{:jolt/min-version "0.8.25"
+{:jolt/min-version "0.8.26"
  :paths ["src"]
  ;; Syntax diagnosis/repair of eval input comes from jolt-lsp
  ;; (jolt-lsp.syntax). Only that dependency-free namespace is loaded, so
